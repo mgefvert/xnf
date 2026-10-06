@@ -173,6 +173,52 @@ kprint_hex:
     pop ebp
     ret
 
+; void kprint_hex64(uint64_t value)
+; At [EBP+8] the low dword is followed by the high dword at [EBP+12].
+kprint_hex64:
+    push ebp
+    mov ebp, esp
+    push ebx
+    push esi
+
+    push dword '0'
+    call kputc
+    add esp, 4
+    push dword 'x'
+    call kputc
+    add esp, 4
+
+    mov ebx, [ebp + 12]       ; Print the high dword first.
+    call .print_dword
+    mov ebx, [ebp + 8]
+    call .print_dword
+
+    pop esi
+    pop ebx
+    pop ebp
+    ret
+
+.print_dword:
+    mov esi, 8
+.next_digit:
+    mov eax, ebx
+    shr eax, 28
+    and eax, 0x0F
+    cmp eax, 9
+    jbe .numeric_digit
+    add eax, 'A' - 10
+    jmp .emit_digit
+.numeric_digit:
+    add eax, '0'
+.emit_digit:
+    push eax
+    call kputc
+    add esp, 4
+    shl ebx, 4
+    dec esi
+    jnz .next_digit
+    ret
+
 ; void kprint_dec(uint32_t value)
 kprint_dec:
     push ebp
@@ -207,6 +253,124 @@ kprint_dec:
     dec edi
     jnz .emit_digit
 
+    pop edi
+    pop esi
+    pop ebx
+    mov esp, ebp
+    pop ebp
+    ret
+
+; void kprintf(const char *format, ...)
+; Supported conversions: %s, %c, %d, %x, %X, and %%.
+; %x consumes uint32_t and uses kprint_hex's 0x plus eight-digit format.
+; %X is an XNF extension that consumes uint64_t and prints sixteen digits.
+kprintf:
+    push ebp
+    mov ebp, esp
+    push ebx
+    push esi
+    push edi
+
+    mov esi, [ebp + 8]         ; Format string.
+    lea edi, [ebp + 12]         ; First variadic argument.
+
+.next_character:
+    lodsb
+    test al, al
+    jz .done
+    cmp al, '%'
+    je .conversion
+
+    movzx eax, al
+    push eax
+    call kputc
+    add esp, 4
+    jmp .next_character
+
+.conversion:
+    lodsb
+    test al, al
+    jz .dangling_percent
+    cmp al, '%'
+    je .percent
+    cmp al, 's'
+    je .string
+    cmp al, 'c'
+    je .character
+    cmp al, 'd'
+    je .decimal
+    cmp al, 'x'
+    je .hex32
+    cmp al, 'X'
+    je .hex64
+
+    ; Keep unsupported conversions visible instead of silently dropping them.
+    movzx ebx, al
+    push dword '%'
+    call kputc
+    add esp, 4
+    push ebx
+    call kputc
+    add esp, 4
+    jmp .next_character
+
+.percent:
+    push dword '%'
+    call kputc
+    add esp, 4
+    jmp .next_character
+
+.string:
+    push dword [edi]
+    add edi, 4
+    call kputs
+    add esp, 4
+    jmp .next_character
+
+.character:
+    push dword [edi]
+    add edi, 4
+    call kputc
+    add esp, 4
+    jmp .next_character
+
+.decimal:
+    mov ebx, [edi]
+    add edi, 4
+    test ebx, ebx
+    jns .print_decimal
+    push dword '-'
+    call kputc
+    add esp, 4
+    neg ebx                   ; INT32_MIN remains 0x80000000 as unsigned magnitude.
+.print_decimal:
+    push ebx
+    call kprint_dec
+    add esp, 4
+    jmp .next_character
+
+.hex32:
+    push dword [edi]
+    add edi, 4
+    call kprint_hex
+    add esp, 4
+    jmp .next_character
+
+.hex64:
+    ; The caller lays a uint64_t out low dword first, then high dword.
+    push dword [edi + 4]
+    push dword [edi]
+    add edi, 8
+    call kprint_hex64
+    add esp, 8
+    jmp .next_character
+
+.dangling_percent:
+    push dword '%'
+    call kputc
+    add esp, 4
+
+.done:
     pop edi
     pop esi
     pop ebx

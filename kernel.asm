@@ -28,6 +28,7 @@ start:
     ; BIOS E820 is only available before entering protected mode.
     ; CF is set if the map could not be collected completely.
     call memory_detect
+    setc byte [e820_detection_failed]
 
     ; Enable A20 through the Fast A20 Gate (port 0x92). Keep reset bit 0 clear.
     in al, 0x92
@@ -159,6 +160,9 @@ e820_continuation:
     dd 0
 e820_slot_offset:
     dw 0
+e820_detection_failed:
+    db 0
+align 4, db 0
 e820_map:
     times E820_MAP_SIZE db 0
 
@@ -202,38 +206,70 @@ protected_mode_entry:
     cld
 
     call clear_screen
-
-    mov esi,16
-.again:
-    mov eax, KERNEL_LOAD_ADDRESS + message
-    push eax
-    call kputs
-    add esp, 4
-
-    push esi
-    call kprint_hex
-    add esp, 4
-
-    push dword ' '
-    call kputc
-    add esp, 4
-
-    push esi
-    call kprint_dec
-    add esp, 4
-
-    push dword 10
-    call kputc
-    add esp, 4
-
-    dec esi
-    jnz .again
+    call display_e820_map
 
 .halt:
     cli
     hlt
     jmp .halt
 
-message db 'xnf: ', 0
+e820_heading_format db 'E820 memory map: %d entries%s', 10, 0
+e820_collection_complete db 0
+e820_collection_incomplete db ' (collection incomplete)', 0
+e820_entry_format db 'Entry %d base=%X length=%X', 10, '       type=%x attributes=%x', 10, 0
+
+; Print the entries in BIOS order without classifying or changing their data.
+display_e820_map:
+    push ebp
+    mov ebp, esp
+    push ebx
+    push esi
+    push edi
+
+    movzx esi, word [KERNEL_LOAD_ADDRESS + e820_entry_count]
+    cmp byte [KERNEL_LOAD_ADDRESS + e820_detection_failed], 0
+    jne .incomplete_map
+    push dword KERNEL_LOAD_ADDRESS + e820_collection_complete
+    jmp .print_heading
+.incomplete_map:
+    push dword KERNEL_LOAD_ADDRESS + e820_collection_incomplete
+.print_heading:
+    push esi
+    push dword KERNEL_LOAD_ADDRESS + e820_heading_format
+    call kprintf
+    add esp, 12
+
+    xor ebx, ebx
+.entry_loop:
+    cmp ebx, esi
+    jae .done
+
+    mov eax, ebx
+    imul eax, eax, E820_ENTRY_SIZE
+    add eax, KERNEL_LOAD_ADDRESS + e820_map
+    mov edi, eax
+
+    ; Push variadic arguments right-to-left. Each %X consumes low then high
+    ; dwords from the argument area and prints one 64-bit field.
+    push dword [edi + 20]      ; attributes (%x)
+    push dword [edi + 16]      ; type (%x)
+    push dword [edi + 12]
+    push dword [edi + 8]
+    push dword [edi + 4]
+    push dword [edi]
+    push ebx                   ; index (%d)
+    push dword KERNEL_LOAD_ADDRESS + e820_entry_format
+    call kprintf
+    add esp, 32
+    inc ebx
+    jmp .entry_loop
+
+.done:
+    pop edi
+    pop esi
+    pop ebx
+    mov esp, ebp
+    pop ebp
+    ret
 
 %include "conio.asm"

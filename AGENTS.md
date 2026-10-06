@@ -32,7 +32,10 @@ protected mode. There is no paging or C runtime.
 - `ksetcursor(column, row)` clamps coordinates to the screen. `kgetcursor`
   takes writable `uint32_t *column` and `uint32_t *row` output pointers.
 - `kprint_hex` prints eight uppercase hexadecimal digits with a `0x` prefix;
+  `kprint_hex64` prints a 64-bit value the same way with sixteen digits;
   `kprint_dec` prints an unsigned 32-bit decimal value.
+- `kprintf` supports `%s`, `%c`, signed `%d`, `%x`, `%X`, and `%%`. `%X` is an
+  XNF extension that consumes a 64-bit value; `%x` uses `kprint_hex` formatting.
 
 Keep assembly straightforward and comment real-mode/protected-mode assumptions
 where they affect addresses or BIOS calls.
