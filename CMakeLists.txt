@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(xnf LANGUAGES NONE)
 
+# Expose the header root to CLion's CMake model as well as the custom GCC rules.
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/inc")
+
 find_program(NASM_EXECUTABLE nasm REQUIRED)
 find_program(QEMU_EXECUTABLE qemu-system-i386 REQUIRED)
 
@@ -28,8 +31,6 @@ find_program(KERNEL_OBJCOPY
 
 set(KERNEL_BIN "${CMAKE_BINARY_DIR}/kernel.bin")
 set(KERNEL_ASM_OBJECT "${CMAKE_BINARY_DIR}/kernel_asm.obj")
-set(KERNEL_C_OBJECT "${CMAKE_BINARY_DIR}/kernel_c.obj")
-set(KERNEL_CONIO_OBJECT "${CMAKE_BINARY_DIR}/conio_c.obj")
 set(KERNEL_LINKED_EXE "${CMAKE_BINARY_DIR}/kernel_linked.exe")
 set(KERNEL_PADDED "${CMAKE_BINARY_DIR}/kernel.padded.bin")
 set(KERNEL_SECTORS_INCLUDE "${CMAKE_BINARY_DIR}/kernel_sectors.inc")
@@ -49,44 +50,41 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_command(
-    OUTPUT "${KERNEL_C_OBJECT}"
-    COMMAND "${KERNEL_C_COMPILER}"
-        -m32
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
-        -ffreestanding
-        -fno-builtin
-        -fno-pie
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-        -fno-unwind-tables
-        -c "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel.c"
-        -o "${KERNEL_C_OBJECT}"
-    DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/inc/conio.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/inc/types.h"
-    VERBATIM
+# CONFIGURE_DEPENDS makes CMake regenerate this list when a .c file is added
+# to or removed from src. Track the headers too so changes rebuild the C objects.
+file(GLOB KERNEL_C_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
+)
+file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/inc/*.h"
 )
 
-add_custom_command(
-    OUTPUT "${KERNEL_CONIO_OBJECT}"
-    COMMAND "${KERNEL_C_COMPILER}"
-        -m32
-        "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
-        -ffreestanding
-        -fno-builtin
-        -fno-pie
-        -fno-stack-protector
-        -fno-asynchronous-unwind-tables
-        -fno-unwind-tables
-        -c "${CMAKE_CURRENT_SOURCE_DIR}/src/conio.c"
-        -o "${KERNEL_CONIO_OBJECT}"
-    DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/conio.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/inc/conio.h"
-    VERBATIM
-)
+set(KERNEL_C_OBJECTS)
+foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
+    get_filename_component(KERNEL_C_NAME "${KERNEL_C_SOURCE}" NAME_WE)
+    set(KERNEL_C_OBJECT "${CMAKE_BINARY_DIR}/${KERNEL_C_NAME}_c.obj")
+
+    add_custom_command(
+        OUTPUT "${KERNEL_C_OBJECT}"
+        COMMAND "${KERNEL_C_COMPILER}"
+            -m32
+            "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
+            -ffreestanding
+            -fno-builtin
+            -fno-pie
+            -fno-stack-protector
+            -fno-asynchronous-unwind-tables
+            -fno-unwind-tables
+            -c "${KERNEL_C_SOURCE}"
+            -o "${KERNEL_C_OBJECT}"
+        DEPENDS
+            "${KERNEL_C_SOURCE}"
+            ${KERNEL_HEADERS}
+        VERBATIM
+    )
+
+    list(APPEND KERNEL_C_OBJECTS "${KERNEL_C_OBJECT}")
+endforeach()
 
 add_custom_command(
     OUTPUT "${KERNEL_BIN}"
@@ -99,8 +97,7 @@ add_custom_command(
         "-T${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld"
         -o "${KERNEL_LINKED_EXE}"
         "${KERNEL_ASM_OBJECT}"
-        "${KERNEL_C_OBJECT}"
-        "${KERNEL_CONIO_OBJECT}"
+        ${KERNEL_C_OBJECTS}
     COMMAND "${KERNEL_OBJCOPY}"
         --change-addresses -0x10000
         -O binary
@@ -108,8 +105,7 @@ add_custom_command(
         "${KERNEL_BIN}"
     DEPENDS
         "${KERNEL_ASM_OBJECT}"
-        "${KERNEL_C_OBJECT}"
-        "${KERNEL_CONIO_OBJECT}"
+        ${KERNEL_C_OBJECTS}
         "${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld"
     VERBATIM
 )

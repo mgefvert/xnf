@@ -4,11 +4,18 @@
 BITS 32
 
 KERNEL_CODE_SELECTOR equ 0x08
-IDT_ENTRY_COUNT equ 256
-EXCEPTION_COUNT equ 32
+IDT_ENTRY_COUNT      equ 256
+EXCEPTION_COUNT      equ 32
+IRQ0_VECTOR          equ 0x20
+PIC_MASTER_COMMAND   equ 0x20
+PIC_MASTER_DATA      equ 0x21
+PIC_SLAVE_COMMAND    equ 0xA0
+PIC_SLAVE_DATA       equ 0xA1
 
 extern _exception_handler
+extern _timer_handler
 global _interrupts_init
+global _interrupts_enable_and_halt
 
 section .text
 
@@ -60,6 +67,26 @@ ISR_WITH_ERROR 29
 ISR_WITH_ERROR 30
 ISR_NO_ERROR 31
 
+; IRQ0 has no CPU-pushed error code. Preserve every general register because
+; this interrupt can arrive between any two instructions in the interrupted code.
+irq0_stub:
+    pushad
+    cld
+
+    ; Align the stack for the existing 32-bit C ABI before calling the handler.
+    mov ebp, esp
+    and esp, 0xFFFFFFF0
+    call _timer_handler
+    mov esp, ebp
+
+    ; IRQ0 is on the master PIC, so acknowledge it through the master's command
+    ; port (0x20) with the non-specific EOI command (0x20).
+    mov al, 0x20
+    out PIC_MASTER_COMMAND, al
+
+    popad
+    iretd
+
 ; At entry the normalized stack is vector, error code, EIP, CS, EFLAGS.
 ; PUSHAD makes the structure passed to C begin with EDI, ESI, EBP, saved ESP,
 ; EBX, EDX, ECX, and EAX. Clear DF before entering C as required by its ABI.
@@ -107,8 +134,69 @@ _interrupts_init:
     add edi, 8
     loop .install_exception_gate
 
+    ; Keep hardware IRQ0 in this same IDT, immediately after CPU exceptions.
+    mov eax, irq0_stub
+    mov edi, idt + IRQ0_VECTOR * 8
+    mov [edi], ax
+    mov word [edi + 2], KERNEL_CODE_SELECTOR
+    mov byte [edi + 4], 0
+    mov byte [edi + 5], 0x8E
+    shr eax, 16
+    mov [edi + 6], ax
+
     lidt [idtr]
+
+    ; ICW1: initialize both 8259s, expect ICW4. Command ports 0x20/0xA0
+    ; control the master/slave PICs; data ports 0x21/0xA1 take their settings.
+    mov al, 0x11
+    out PIC_MASTER_COMMAND, al
+    call pic_io_wait
+    out PIC_SLAVE_COMMAND, al
+    call pic_io_wait
+
+    ; ICW2: move master IRQs to 0x20..0x27 and slave IRQs to 0x28..0x2F.
+    mov al, 0x20
+    out PIC_MASTER_DATA, al
+    call pic_io_wait
+    mov al, 0x28
+    out PIC_SLAVE_DATA, al
+    call pic_io_wait
+
+    ; ICW3: the slave is attached to master IRQ2; the slave's ID is 2.
+    mov al, 0x04
+    out PIC_MASTER_DATA, al
+    call pic_io_wait
+    mov al, 0x02
+    out PIC_SLAVE_DATA, al
+    call pic_io_wait
+
+    ; ICW4: use 8086 mode on both PICs.
+    mov al, 0x01
+    out PIC_MASTER_DATA, al
+    call pic_io_wait
+    out PIC_SLAVE_DATA, al
+    call pic_io_wait
+
+    ; Mask every line except master IRQ0. IRQ2 remains masked, so no slave
+    ; interrupt can arrive while the slave PIC is fully masked as well.
+    mov al, 0xFE
+    out PIC_MASTER_DATA, al
+    mov al, 0xFF
+    out PIC_SLAVE_DATA, al
+
     popad
+    ret
+
+; Common legacy delay between PIC command/data writes (port 0x80 is unused).
+pic_io_wait:
+    out 0x80, al
+    ret
+
+; Enable maskable interrupts only when the caller is ready to idle. STI delays
+; recognition through the following HLT, so a pending IRQ cannot be missed.
+_interrupts_enable_and_halt:
+    sti
+    hlt
     ret
 
 section .rodata
