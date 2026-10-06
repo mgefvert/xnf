@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(xnf LANGUAGES NONE)
-
-# Expose the header root to CLion's CMake model as well as the custom GCC rules.
-include_directories("${CMAKE_CURRENT_SOURCE_DIR}/inc")
+project(xnf LANGUAGES C)
 
 find_program(NASM_EXECUTABLE nasm REQUIRED)
 find_program(QEMU_EXECUTABLE qemu-system-i386 REQUIRED)
@@ -57,6 +54,20 @@ file(GLOB KERNEL_C_SOURCES CONFIGURE_DEPENDS
 )
 file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/inc/*.h"
+)
+
+# Keep the C files in CMake's code model so CLion can resolve their headers.
+# The real kernel objects are still built by the custom MinGW commands below.
+add_library(kernel_c_model OBJECT EXCLUDE_FROM_ALL ${KERNEL_C_SOURCES})
+target_include_directories(kernel_c_model PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/inc")
+target_compile_options(kernel_c_model PRIVATE
+    -m32
+    -ffreestanding
+    -fno-builtin
+    -fno-pie
+    -fno-stack-protector
+    -fno-asynchronous-unwind-tables
+    -fno-unwind-tables
 )
 
 set(KERNEL_C_OBJECTS)
