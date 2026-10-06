@@ -2,7 +2,6 @@ BITS 16
 section .text
 
 KERNEL_LOAD_ADDRESS equ 0x10000
-PROTECTED_STACK_TOP equ 0x90000
 
 %define RM_OFFSET(label) (label - start)
 %define KERNEL_ADDRESS(label) (KERNEL_LOAD_ADDRESS + label - start)
@@ -20,6 +19,7 @@ E820_MAP_SIZE    equ E820_ENTRY_SIZE * E820_MAX_ENTRIES
 extern _kernel_main             ; MinGW i386 COFF prefixes C names with '_'.
 extern __bss_start
 extern __bss_end
+extern __kernel_stack_top       ; Linker-defined physical address in the flat segment.
 
 start:
     cli
@@ -210,8 +210,8 @@ protected_mode_entry:
     mov gs, ax
     mov ss, ax
 
-    ; Flat data segment, with a stack top at 0x90000 (below VGA/ROM, above the kernel).
-    mov esp, PROTECTED_STACK_TOP
+    ; Use the top of the linker-reserved stack; x86 grows the stack downward.
+    mov esp, __kernel_stack_top
     cld
 
     ; There is no C runtime to clear zero-initialized data for us.

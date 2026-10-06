@@ -60,8 +60,11 @@ file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
 # The real kernel objects are still built by the custom MinGW commands below.
 add_library(kernel_c_model OBJECT EXCLUDE_FROM_ALL ${KERNEL_C_SOURCES})
 target_include_directories(kernel_c_model PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/inc")
+# Bootstrap never enables SSE/MMX CPU state.
 target_compile_options(kernel_c_model PRIVATE
     -m32
+    -mno-sse
+    -mno-mmx
     -ffreestanding
     -fno-builtin
     -fno-pie
@@ -79,6 +82,8 @@ foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
         OUTPUT "${KERNEL_C_OBJECT}"
         COMMAND "${KERNEL_C_COMPILER}"
             -m32
+            -mno-sse
+            -mno-mmx
             "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
             -ffreestanding
             -fno-builtin
