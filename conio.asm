@@ -4,6 +4,7 @@
 ; preserved by functions that use them.
 
 BITS 32
+section .text
 
 CONIO_SCREEN_WIDTH equ 80
 CONIO_SCREEN_HEIGHT equ 25
@@ -18,9 +19,9 @@ clear_screen:
     mov edi, CONIO_VIDEO_MEMORY
     mov ecx, CONIO_SCREEN_CELLS
     mov al, ' '
-    mov ah, [KERNEL_LOAD_ADDRESS + conio_color]
+    mov ah, [conio_color]
     rep stosw
-    mov word [KERNEL_LOAD_ADDRESS + conio_cursor], 0
+    mov word [conio_cursor], 0
     call conio_sync_hw_cursor
     pop edi
     ret
@@ -44,46 +45,46 @@ kputc:
     cmp al, 8
     je .backspace
 
-    movzx edi, word [KERNEL_LOAD_ADDRESS + conio_cursor]
+    movzx edi, word [conio_cursor]
     lea edi, [edi * 2 + CONIO_VIDEO_MEMORY]
-    mov ah, [KERNEL_LOAD_ADDRESS + conio_color]
+    mov ah, [conio_color]
     mov [edi], ax
-    inc word [KERNEL_LOAD_ADDRESS + conio_cursor]
-    cmp word [KERNEL_LOAD_ADDRESS + conio_cursor], CONIO_SCREEN_CELLS
+    inc word [conio_cursor]
+    cmp word [conio_cursor], CONIO_SCREEN_CELLS
     jb .done
     call .scroll
     jmp .done
 
 .newline:
-    movzx eax, word [KERNEL_LOAD_ADDRESS + conio_cursor]
+    movzx eax, word [conio_cursor]
     xor edx, edx
     mov ebx, CONIO_SCREEN_WIDTH
     div ebx
     inc eax
     imul eax, eax, CONIO_SCREEN_WIDTH
-    mov [KERNEL_LOAD_ADDRESS + conio_cursor], ax
+    mov [conio_cursor], ax
     cmp ax, CONIO_SCREEN_CELLS
     jb .done
     call .scroll
     jmp .done
 
 .carriage_return:
-    movzx eax, word [KERNEL_LOAD_ADDRESS + conio_cursor]
+    movzx eax, word [conio_cursor]
     xor edx, edx
     mov ebx, CONIO_SCREEN_WIDTH
     div ebx
     imul eax, ebx
-    mov [KERNEL_LOAD_ADDRESS + conio_cursor], ax
+    mov [conio_cursor], ax
     jmp .done
 
 .backspace:
-    cmp word [KERNEL_LOAD_ADDRESS + conio_cursor], 0
+    cmp word [conio_cursor], 0
     je .done
-    dec word [KERNEL_LOAD_ADDRESS + conio_cursor]
-    movzx edi, word [KERNEL_LOAD_ADDRESS + conio_cursor]
+    dec word [conio_cursor]
+    movzx edi, word [conio_cursor]
     lea edi, [edi * 2 + CONIO_VIDEO_MEMORY]
     mov al, ' '
-    mov ah, [KERNEL_LOAD_ADDRESS + conio_color]
+    mov ah, [conio_color]
     mov [edi], ax
     jmp .done
 
@@ -98,9 +99,9 @@ kputc:
     mov edi, CONIO_VIDEO_MEMORY + CONIO_SCREEN_WIDTH * (CONIO_SCREEN_HEIGHT - 1) * 2
     mov ecx, CONIO_SCREEN_WIDTH
     mov al, ' '
-    mov ah, [KERNEL_LOAD_ADDRESS + conio_color]
+    mov ah, [conio_color]
     rep stosw
-    mov word [KERNEL_LOAD_ADDRESS + conio_cursor], CONIO_SCREEN_WIDTH * (CONIO_SCREEN_HEIGHT - 1)
+    mov word [conio_cursor], CONIO_SCREEN_WIDTH * (CONIO_SCREEN_HEIGHT - 1)
     ret
 
 .done:
@@ -113,6 +114,8 @@ kputc:
     ret
 
 ; void kputs(const char *string)
+global _kputs
+_kputs:
 kputs:
     push ebp
     mov ebp, esp
@@ -383,13 +386,13 @@ ksetcolor:
     push ebp
     mov ebp, esp
     mov eax, [ebp + 8]
-    mov [KERNEL_LOAD_ADDRESS + conio_color], al
+    mov [conio_color], al
     pop ebp
     ret
 
 ; uint32_t kgetcolor(void)
 kgetcolor:
-    movzx eax, byte [KERNEL_LOAD_ADDRESS + conio_color]
+    movzx eax, byte [conio_color]
     ret
 
 ; void ksetcursor(uint32_t column, uint32_t row)
@@ -409,7 +412,7 @@ ksetcursor:
 .row_valid:
     imul edx, edx, CONIO_SCREEN_WIDTH
     add eax, edx
-    mov [KERNEL_LOAD_ADDRESS + conio_cursor], ax
+    mov [conio_cursor], ax
     call conio_sync_hw_cursor
     pop ebp
     ret
@@ -419,7 +422,7 @@ ksetcursor:
 kgetcursor:
     push ebp
     mov ebp, esp
-    movzx eax, word [KERNEL_LOAD_ADDRESS + conio_cursor]
+    movzx eax, word [conio_cursor]
     xor edx, edx
     mov ecx, CONIO_SCREEN_WIDTH
     div ecx
@@ -449,20 +452,21 @@ conio_sync_hw_cursor:
     mov al, 0x0F               ; Cursor location low byte.
     out dx, al
     inc dx
-    mov al, [KERNEL_LOAD_ADDRESS + conio_cursor]
+    mov al, [conio_cursor]
     out dx, al
 
     dec dx                     ; Return to the CRTC index port.
     mov al, 0x0E               ; Cursor location high byte.
     out dx, al
     inc dx
-    mov al, [KERNEL_LOAD_ADDRESS + conio_cursor + 1]
+    mov al, [conio_cursor + 1]
     out dx, al
 
     pop edx
     pop eax
     ret
 
+section .data
 align 4, db 0
 conio_color:
     db 0x07

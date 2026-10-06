@@ -1,8 +1,11 @@
 BITS 16
-ORG 0x0000
+section .text
 
 KERNEL_LOAD_ADDRESS equ 0x10000
 PROTECTED_STACK_TOP equ 0x90000
+
+%define RM_OFFSET(label) (label - start)
+%define KERNEL_ADDRESS(label) (KERNEL_LOAD_ADDRESS + label - start)
 
 NULL_SELECTOR equ 0x00
 KERNEL_CODE_SELECTOR equ 0x08
@@ -13,6 +16,10 @@ E820_SIGNATURE equ 0x534D4150
 E820_ENTRY_SIZE equ 24
 E820_MAX_ENTRIES equ 32
 E820_MAP_SIZE equ E820_ENTRY_SIZE * E820_MAX_ENTRIES
+
+extern _kernel_main             ; MinGW i386 COFF prefixes C names with '_'.
+extern __bss_start
+extern __bss_end
 
 start:
     cli
@@ -28,7 +35,7 @@ start:
     ; BIOS E820 is only available before entering protected mode.
     ; CF is set if the map could not be collected completely.
     call memory_detect
-    setc byte [e820_detection_failed]
+    setc byte [RM_OFFSET(e820_detection_failed)]
 
     ; Enable A20 through the Fast A20 Gate (port 0x92). Keep reset bit 0 clear.
     in al, 0x92
@@ -37,7 +44,7 @@ start:
     out 0x92, al
 
     ; Flat ring-0 GDT: null, 32-bit code, and 32-bit data descriptors.
-    lgdt [gdtr]
+    lgdt [RM_OFFSET(gdtr)]
 
     mov eax, cr0
     or eax, 1                  ; CR0.PE = 1: enter protected mode.
@@ -82,25 +89,25 @@ memory_detect:
     ; Clear all slots so legacy 20-byte entries have zero attributes and any
     ; unused slots remain zero as well.
     xor ax, ax
-    mov di, e820_map
+    mov di, RM_OFFSET(e820_map)
     mov cx, E820_MAP_SIZE / 2
     rep stosw
 
-    mov word [e820_entry_count], 0
-    mov dword [e820_continuation], 0
+    mov word [RM_OFFSET(e820_entry_count)], 0
+    mov dword [RM_OFFSET(e820_continuation)], 0
 
 .next_entry:
     ; If a prior response supplied another continuation value, the map is full.
-    cmp word [e820_entry_count], E820_MAX_ENTRIES
+    cmp word [RM_OFFSET(e820_entry_count)], E820_MAX_ENTRIES
     jae .failure
 
     ; ES:DI points at the next 24-byte slot. Entry count is at most 31 here.
-    mov ax, [e820_entry_count]
+    mov ax, [RM_OFFSET(e820_entry_count)]
     mov bx, E820_ENTRY_SIZE
     mul bx
-    add ax, e820_map
+    add ax, RM_OFFSET(e820_map)
     mov di, ax
-    mov [e820_slot_offset], di
+    mov [RM_OFFSET(e820_slot_offset)], di
 
     ; E820 callers set attributes bit 0 to request the extended attributes.
     mov dword [es:di + 20], 1
@@ -108,7 +115,7 @@ memory_detect:
     mov eax, E820_FUNCTION
     mov edx, E820_SIGNATURE
     mov ecx, E820_ENTRY_SIZE
-    mov ebx, [e820_continuation]
+    mov ebx, [RM_OFFSET(e820_continuation)]
 
     ; Keep the kernel data segments valid even if the BIOS changes DS or ES.
     ; ES:DI remains set to the destination for the duration of INT 15h.
@@ -117,7 +124,7 @@ memory_detect:
     int 0x15
     pop es
     pop ds
-    mov di, [e820_slot_offset]
+    mov di, [RM_OFFSET(e820_slot_offset)]
 
     jc .failure
     cmp eax, E820_SIGNATURE
@@ -134,8 +141,8 @@ memory_detect:
     mov dword [es:di + 20], 0
 
 .entry_ready:
-    mov [e820_continuation], ebx
-    inc word [e820_entry_count]
+    mov [RM_OFFSET(e820_continuation)], ebx
+    inc word [RM_OFFSET(e820_entry_count)]
     test ebx, ebx
     jnz .next_entry
 
@@ -188,9 +195,9 @@ gdt_end:
 
 gdtr:
     dw gdt_end - gdt_start - 1 ; GDT size in bytes, minus one.
-    dd KERNEL_LOAD_ADDRESS + gdt_start ; Physical/linear base because the kernel is at 0x10000.
+    dd KERNEL_ADDRESS(gdt_start) ; Linker places the flat image at 0x10000.
 
-protected_mode_entry_address equ KERNEL_LOAD_ADDRESS + protected_mode_entry
+protected_mode_entry_address equ KERNEL_ADDRESS(protected_mode_entry)
 
 BITS 32
 protected_mode_entry:
@@ -205,8 +212,16 @@ protected_mode_entry:
     mov esp, PROTECTED_STACK_TOP
     cld
 
+    ; There is no C runtime to clear zero-initialized data for us.
+    mov edi, __bss_start
+    mov ecx, __bss_end
+    sub ecx, edi
+    xor eax, eax
+    rep stosb
+
     call clear_screen
     call display_e820_map
+    call _kernel_main
 
 .halt:
     cli
@@ -226,16 +241,16 @@ display_e820_map:
     push esi
     push edi
 
-    movzx esi, word [KERNEL_LOAD_ADDRESS + e820_entry_count]
-    cmp byte [KERNEL_LOAD_ADDRESS + e820_detection_failed], 0
+    movzx esi, word [KERNEL_ADDRESS(e820_entry_count)]
+    cmp byte [KERNEL_ADDRESS(e820_detection_failed)], 0
     jne .incomplete_map
-    push dword KERNEL_LOAD_ADDRESS + e820_collection_complete
+    push dword KERNEL_ADDRESS(e820_collection_complete)
     jmp .print_heading
 .incomplete_map:
-    push dword KERNEL_LOAD_ADDRESS + e820_collection_incomplete
+    push dword KERNEL_ADDRESS(e820_collection_incomplete)
 .print_heading:
     push esi
-    push dword KERNEL_LOAD_ADDRESS + e820_heading_format
+    push dword KERNEL_ADDRESS(e820_heading_format)
     call kprintf
     add esp, 12
 
@@ -246,7 +261,7 @@ display_e820_map:
 
     mov eax, ebx
     imul eax, eax, E820_ENTRY_SIZE
-    add eax, KERNEL_LOAD_ADDRESS + e820_map
+    add eax, KERNEL_ADDRESS(e820_map)
     mov edi, eax
 
     ; Push variadic arguments right-to-left. Each %X consumes low then high
@@ -258,7 +273,7 @@ display_e820_map:
     push dword [edi + 4]
     push dword [edi]
     push ebx                   ; index (%d)
-    push dword KERNEL_LOAD_ADDRESS + e820_entry_format
+    push dword KERNEL_ADDRESS(e820_entry_format)
     call kprintf
     add esp, 32
     inc ebx

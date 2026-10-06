@@ -11,8 +11,14 @@ protected mode. There is no paging or C runtime.
 - Keep hand-written NASM sources and CMake scripts under version control.
 - CMake-generated binaries, the padded kernel, sector include, and disk image
   belong in the build directory.
-- `kernel.asm` is assembled as a flat binary. It includes `conio.asm` after
-  switching to `BITS 32`; the include path is set by `CMakeLists.txt`.
+- `kernel.asm` is assembled with NASM as a 32-bit COFF object; its first
+  section still begins the image at `0x10000`. `conio.asm` is included after
+  switching to `BITS 32`.
+- `kernel.c` is compiled as freestanding 32-bit C with CLion's MinGW GCC. The
+  build links only kernel objects, uses `kernel.ld` for section placement, and
+  converts the linker output to a flat image for the existing BIOS pipeline.
+- The assembly entry clears linker-defined `.bss` bounds before calling
+  `kernel_main`; there is no C runtime startup.
 - The boot sector loads the kernel in one BIOS extended-read request, limited
   to 127 sectors.
 
@@ -36,6 +42,7 @@ protected mode. There is no paging or C runtime.
   `kprint_dec` prints an unsigned 32-bit decimal value.
 - `kprintf` supports `%s`, `%c`, signed `%d`, `%x`, `%X`, and `%%`. `%X` is an
   XNF extension that consumes a 64-bit value; `%x` uses `kprint_hex` formatting.
+- C code may call assembly `kputs` using the same 32-bit cdecl convention.
 
 Keep assembly straightforward and comment real-mode/protected-mode assumptions
 where they affect addresses or BIOS calls.
