@@ -7,15 +7,15 @@ PROTECTED_STACK_TOP equ 0x90000
 %define RM_OFFSET(label) (label - start)
 %define KERNEL_ADDRESS(label) (KERNEL_LOAD_ADDRESS + label - start)
 
-NULL_SELECTOR equ 0x00
+NULL_SELECTOR        equ 0x00
 KERNEL_CODE_SELECTOR equ 0x08
 KERNEL_DATA_SELECTOR equ 0x10
 
-E820_FUNCTION equ 0xE820
-E820_SIGNATURE equ 0x534D4150
-E820_ENTRY_SIZE equ 24
+E820_FUNCTION    equ 0xE820
+E820_SIGNATURE   equ 0x534D4150
+E820_ENTRY_SIZE  equ 24
 E820_MAX_ENTRIES equ 32
-E820_MAP_SIZE equ E820_ENTRY_SIZE * E820_MAX_ENTRIES
+E820_MAP_SIZE    equ E820_ENTRY_SIZE * E820_MAX_ENTRIES
 
 extern _kernel_main             ; MinGW i386 COFF prefixes C names with '_'.
 extern __bss_start
@@ -35,7 +35,7 @@ start:
     ; BIOS E820 is only available before entering protected mode.
     ; CF is set if the map could not be collected completely.
     call memory_detect
-    setc byte [RM_OFFSET(e820_detection_failed)]
+    setc byte [RM_OFFSET(_e820_detection_failed)]
 
     ; Enable A20 through the Fast A20 Gate (port 0x92). Keep reset bit 0 clear.
     in al, 0x92
@@ -89,25 +89,25 @@ memory_detect:
     ; Clear all slots so legacy 20-byte entries have zero attributes and any
     ; unused slots remain zero as well.
     xor ax, ax
-    mov di, RM_OFFSET(e820_map)
+    mov di, RM_OFFSET(_e820_map)
     mov cx, E820_MAP_SIZE / 2
     rep stosw
 
-    mov word [RM_OFFSET(e820_entry_count)], 0
-    mov dword [RM_OFFSET(e820_continuation)], 0
+    mov word [RM_OFFSET(_e820_entry_count)], 0
+    mov dword [RM_OFFSET(_e820_continuation)], 0
 
 .next_entry:
     ; If a prior response supplied another continuation value, the map is full.
-    cmp word [RM_OFFSET(e820_entry_count)], E820_MAX_ENTRIES
+    cmp word [RM_OFFSET(_e820_entry_count)], E820_MAX_ENTRIES
     jae .failure
 
     ; ES:DI points at the next 24-byte slot. Entry count is at most 31 here.
-    mov ax, [RM_OFFSET(e820_entry_count)]
+    mov ax, [RM_OFFSET(_e820_entry_count)]
     mov bx, E820_ENTRY_SIZE
     mul bx
-    add ax, RM_OFFSET(e820_map)
+    add ax, RM_OFFSET(_e820_map)
     mov di, ax
-    mov [RM_OFFSET(e820_slot_offset)], di
+    mov [RM_OFFSET(_e820_slot_offset)], di
 
     ; E820 callers set attributes bit 0 to request the extended attributes.
     mov dword [es:di + 20], 1
@@ -115,7 +115,7 @@ memory_detect:
     mov eax, E820_FUNCTION
     mov edx, E820_SIGNATURE
     mov ecx, E820_ENTRY_SIZE
-    mov ebx, [RM_OFFSET(e820_continuation)]
+    mov ebx, [RM_OFFSET(_e820_continuation)]
 
     ; Keep the kernel data segments valid even if the BIOS changes DS or ES.
     ; ES:DI remains set to the destination for the duration of INT 15h.
@@ -124,7 +124,7 @@ memory_detect:
     int 0x15
     pop es
     pop ds
-    mov di, [RM_OFFSET(e820_slot_offset)]
+    mov di, [RM_OFFSET(_e820_slot_offset)]
 
     jc .failure
     cmp eax, E820_SIGNATURE
@@ -141,8 +141,8 @@ memory_detect:
     mov dword [es:di + 20], 0
 
 .entry_ready:
-    mov [RM_OFFSET(e820_continuation)], ebx
-    inc word [RM_OFFSET(e820_entry_count)]
+    mov [RM_OFFSET(_e820_continuation)], ebx
+    inc word [RM_OFFSET(_e820_entry_count)]
     test ebx, ebx
     jnz .next_entry
 
@@ -161,20 +161,22 @@ memory_detect:
 
 ; BIOS-reported E820 entries are kept verbatim in their original order.
 align 4, db 0
-e820_entry_count:
-    dw 0
-e820_continuation:
-    dd 0
-e820_slot_offset:
-    dw 0
-e820_detection_failed:
-    db 0
+global _e820_entry_count
+global _e820_detection_failed
+
+_e820_entry_count:      dw 0
+_e820_continuation:     dd 0
+_e820_slot_offset:      dw 0
+_e820_detection_failed: db 0
+
 align 4, db 0
-e820_map:
-    times E820_MAP_SIZE db 0
+global _e820_map
+
+_e820_map:              times E820_MAP_SIZE db 0
 
 align 8, db 0
 gdt_start:
+
 gdt_null:
     dq 0                       ; Selector 0x00: mandatory null descriptor.
 gdt_code:
@@ -219,8 +221,7 @@ protected_mode_entry:
     xor eax, eax
     rep stosb
 
-    call clear_screen
-    call display_e820_map
+    call _interrupts_init
     call _kernel_main
 
 .halt:
@@ -228,63 +229,4 @@ protected_mode_entry:
     hlt
     jmp .halt
 
-e820_heading_format db 'E820 memory map: %d entries%s', 10, 0
-e820_collection_complete db 0
-e820_collection_incomplete db ' (collection incomplete)', 0
-e820_entry_format db 'Entry %d base=%X length=%X', 10, '       type=%x attributes=%x', 10, 0
-
-; Print the entries in BIOS order without classifying or changing their data.
-display_e820_map:
-    push ebp
-    mov ebp, esp
-    push ebx
-    push esi
-    push edi
-
-    movzx esi, word [KERNEL_ADDRESS(e820_entry_count)]
-    cmp byte [KERNEL_ADDRESS(e820_detection_failed)], 0
-    jne .incomplete_map
-    push dword KERNEL_ADDRESS(e820_collection_complete)
-    jmp .print_heading
-.incomplete_map:
-    push dword KERNEL_ADDRESS(e820_collection_incomplete)
-.print_heading:
-    push esi
-    push dword KERNEL_ADDRESS(e820_heading_format)
-    call kprintf
-    add esp, 12
-
-    xor ebx, ebx
-.entry_loop:
-    cmp ebx, esi
-    jae .done
-
-    mov eax, ebx
-    imul eax, eax, E820_ENTRY_SIZE
-    add eax, KERNEL_ADDRESS(e820_map)
-    mov edi, eax
-
-    ; Push variadic arguments right-to-left. Each %X consumes low then high
-    ; dwords from the argument area and prints one 64-bit field.
-    push dword [edi + 20]      ; attributes (%x)
-    push dword [edi + 16]      ; type (%x)
-    push dword [edi + 12]
-    push dword [edi + 8]
-    push dword [edi + 4]
-    push dword [edi]
-    push ebx                   ; index (%d)
-    push dword KERNEL_ADDRESS(e820_entry_format)
-    call kprintf
-    add esp, 32
-    inc ebx
-    jmp .entry_loop
-
-.done:
-    pop edi
-    pop esi
-    pop ebx
-    mov esp, ebp
-    pop ebp
-    ret
-
-%include "conio.asm"
+%include "interrupts.asm"

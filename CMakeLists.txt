@@ -29,6 +29,7 @@ find_program(KERNEL_OBJCOPY
 set(KERNEL_BIN "${CMAKE_BINARY_DIR}/kernel.bin")
 set(KERNEL_ASM_OBJECT "${CMAKE_BINARY_DIR}/kernel_asm.obj")
 set(KERNEL_C_OBJECT "${CMAKE_BINARY_DIR}/kernel_c.obj")
+set(KERNEL_CONIO_OBJECT "${CMAKE_BINARY_DIR}/conio_c.obj")
 set(KERNEL_LINKED_EXE "${CMAKE_BINARY_DIR}/kernel_linked.exe")
 set(KERNEL_PADDED "${CMAKE_BINARY_DIR}/kernel.padded.bin")
 set(KERNEL_SECTORS_INCLUDE "${CMAKE_BINARY_DIR}/kernel_sectors.inc")
@@ -37,10 +38,14 @@ set(DISK_IMAGE "${CMAKE_BINARY_DIR}/xnf.img")
 
 add_custom_command(
     OUTPUT "${KERNEL_ASM_OBJECT}"
-    COMMAND "${NASM_EXECUTABLE}" -f win32 "-I${CMAKE_CURRENT_SOURCE_DIR}/" -o "${KERNEL_ASM_OBJECT}" "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
+    COMMAND "${NASM_EXECUTABLE}"
+        -f win32
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/asm/"
+        -o "${KERNEL_ASM_OBJECT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/kernel.asm"
     DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
-        "${CMAKE_CURRENT_SOURCE_DIR}/conio.asm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/kernel.asm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/interrupts.asm"
     VERBATIM
 )
 
@@ -48,15 +53,38 @@ add_custom_command(
     OUTPUT "${KERNEL_C_OBJECT}"
     COMMAND "${KERNEL_C_COMPILER}"
         -m32
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
         -ffreestanding
         -fno-builtin
         -fno-pie
         -fno-stack-protector
         -fno-asynchronous-unwind-tables
         -fno-unwind-tables
-        -c "${CMAKE_CURRENT_SOURCE_DIR}/kernel.c"
+        -c "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel.c"
         -o "${KERNEL_C_OBJECT}"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/kernel.c"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/inc/conio.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/inc/types.h"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT "${KERNEL_CONIO_OBJECT}"
+    COMMAND "${KERNEL_C_COMPILER}"
+        -m32
+        "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
+        -ffreestanding
+        -fno-builtin
+        -fno-pie
+        -fno-stack-protector
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -c "${CMAKE_CURRENT_SOURCE_DIR}/src/conio.c"
+        -o "${KERNEL_CONIO_OBJECT}"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/conio.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/inc/conio.h"
     VERBATIM
 )
 
@@ -72,6 +100,7 @@ add_custom_command(
         -o "${KERNEL_LINKED_EXE}"
         "${KERNEL_ASM_OBJECT}"
         "${KERNEL_C_OBJECT}"
+        "${KERNEL_CONIO_OBJECT}"
     COMMAND "${KERNEL_OBJCOPY}"
         --change-addresses -0x10000
         -O binary
@@ -80,6 +109,7 @@ add_custom_command(
     DEPENDS
         "${KERNEL_ASM_OBJECT}"
         "${KERNEL_C_OBJECT}"
+        "${KERNEL_CONIO_OBJECT}"
         "${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld"
     VERBATIM
 )
@@ -100,9 +130,13 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT "${BOOT_BIN}"
-    COMMAND "${NASM_EXECUTABLE}" -f bin "-I${CMAKE_BINARY_DIR}/" -o "${BOOT_BIN}" "${CMAKE_CURRENT_SOURCE_DIR}/boot.asm"
+    COMMAND "${NASM_EXECUTABLE}"
+        -f bin
+        "-I${CMAKE_BINARY_DIR}/"
+        -o "${BOOT_BIN}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/boot.asm"
     DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/boot.asm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/boot.asm"
         "${KERNEL_SECTORS_INCLUDE}"
     VERBATIM
 )
