@@ -12,8 +12,10 @@ set(DISK_IMAGE "${CMAKE_BINARY_DIR}/xnf.img")
 
 add_custom_command(
     OUTPUT "${KERNEL_BIN}"
-    COMMAND "${NASM_EXECUTABLE}" -f bin -o "${KERNEL_BIN}" "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
+    COMMAND "${NASM_EXECUTABLE}" -f bin "-I${CMAKE_CURRENT_SOURCE_DIR}/" -o "${KERNEL_BIN}" "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/kernel.asm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/conio.asm"
     VERBATIM
 )
 

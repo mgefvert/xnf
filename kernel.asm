@@ -203,33 +203,37 @@ protected_mode_entry:
 
     call clear_screen
 
-    mov eax,KERNEL_LOAD_ADDRESS + message
-    call kprintmsg
+    mov esi,16
+.again:
+    mov eax, KERNEL_LOAD_ADDRESS + message
+    push eax
+    call kputs
+    add esp, 4
+
+    push esi
+    call kprint_hex
+    add esp, 4
+
+    push dword ' '
+    call kputc
+    add esp, 4
+
+    push esi
+    call kprint_dec
+    add esp, 4
+
+    push dword 10
+    call kputc
+    add esp, 4
+
+    dec esi
+    jnz .again
 
 .halt:
     cli
     hlt
     jmp .halt
 
-message db 'Welcome to XNF protected mode', 0
+message db 'xnf: ', 0
 
-clear_screen:
-    ; Clear all 80x25 text cells, then print at the upper-left corner.
-    mov edi, 0x000B8000
-    mov ecx, 80 * 25
-    mov ax, 0x0720
-    rep stosw
-    ret
-
-kprintmsg:
-    mov esi, eax
-    mov edi, 0x000B8000
-.print:
-    lodsb
-    or al, al
-    jz .print_end
-    mov ah, 0x07
-    stosw
-    jmp .print
-.print_end:
-    ret
+%include "conio.asm"
