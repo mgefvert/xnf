@@ -43,10 +43,28 @@ static const char *exception_name(uint32_t vector)
 
 void exception_handler(const ExceptionFrame *frame)
 {
+    uint32_t fault_address = 0;
+
+    if (frame->vector == 14) {
+        /* Capture CR2 before console output could cause another page fault. */
+        __asm__ volatile ("mov %%cr2, %0" : "=r" (fault_address) : : "memory");
+    }
+
     kprintf("Exception %d: %s\n", frame->vector, exception_name(frame->vector));
     kprintf("Error code: %x\n", frame->error_code);
     kprintf("EIP: %x  CS: %x  EFLAGS: %x\n",
             frame->eip, frame->cs, frame->eflags);
+
+    if (frame->vector == 14) {
+        kprintf("Faulting linear address (CR2): %x\n", fault_address);
+        kprintf("Page fault: %s, %s, %s\n",
+                (frame->error_code & (1u << 0)) ? "protection violation" : "non-present page",
+                (frame->error_code & (1u << 1)) ? "write" : "read",
+                (frame->error_code & (1u << 2)) ? "user" : "supervisor");
+        kprintf("Reserved-bit violation: %s  Instruction fetch: %s\n",
+                (frame->error_code & (1u << 3)) ? "yes" : "no",
+                (frame->error_code & (1u << 4)) ? "yes" : "no");
+    }
 
     for (;;) {
         __asm__ volatile ("cli; hlt");

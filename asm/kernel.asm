@@ -229,4 +229,5 @@ protected_mode_entry:
     hlt
     jmp .halt
 
+%include "paging.asm"
 %include "interrupts.asm"

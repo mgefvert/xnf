@@ -43,6 +43,7 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/asm/kernel.asm"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/asm/kernel.asm"
+        "${CMAKE_CURRENT_SOURCE_DIR}/asm/paging.asm"
         "${CMAKE_CURRENT_SOURCE_DIR}/asm/interrupts.asm"
     VERBATIM
 )
