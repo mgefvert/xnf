@@ -29,6 +29,7 @@ static uint64_t boundaries[MEMBLOCK_MAX_BOUNDARIES];
 static uint32_t region_count;
 static uint32_t boundary_count;
 static uint8_t initialized;
+static uint8_t allocator_retired;
 
 static __attribute__((noreturn)) void memblock_panic(const char *reason)
 {
@@ -277,6 +278,9 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
     uint32_t i;
     uint64_t mask;
 
+    if (allocator_retired) {
+        memblock_panic("bootstrap allocator retired; use PMM for physical pages");
+    }
     if (!initialized || size == 0 || alignment == 0 ||
         (alignment & (alignment - 1)) != 0) {
         memblock_panic("invalid allocation request or uninitialized map");
@@ -309,6 +313,16 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
         }
     }
     return 0;
+}
+
+void memblock_retire(void)
+{
+    if (!initialized) {
+        memblock_panic("cannot retire an uninitialized allocator");
+    }
+    /* Keep the region map and existing allocations intact for PMM reservation
+       checks. There is deliberately no operation to re-enable allocations. */
+    allocator_retired = 1;
 }
 
 uint32_t memblock_region_count(void)

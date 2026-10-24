@@ -2,6 +2,7 @@
 #include "conio.h"
 #include "memory.h"
 #include "paging.h"
+#include "pmm.h"
 
 #define TIMER_DISPLAY_INTERVAL 18u
 
@@ -25,6 +26,8 @@ void kernel_main(void)
 
     paging_prepare();
     paging_enable();
+    pmm_init();
+    pmm_self_test();
 
     kprintf("Kernel started.\n");
 

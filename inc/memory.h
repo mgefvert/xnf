@@ -22,6 +22,9 @@ typedef struct {
 void display_e820_map(void);
 void memblock_init(void);
 uint64_t memblock_alloc(uint64_t size, uint64_t alignment);
+/* Called by pmm_init after importing reservations, with IRQs disabled.
+   Permanently forbid new allocations; existing regions remain readable. */
+void memblock_retire(void);
 uint32_t memblock_region_count(void);
 const MemblockRegion *memblock_region(uint32_t index);
 void memblock_dump(void);
