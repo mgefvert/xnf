@@ -1,25 +1,14 @@
 #include "memory.h"
 #include "conio.h"
+#include "panic.h"
+#include "e820.h"
+#include "mm.h"
 
-#define E820_MAX_ENTRIES 32u
 #define MEMBLOCK_MAX_REGIONS 128u
 #define MEMBLOCK_MAX_BOUNDARIES (2u * E820_MAX_ENTRIES + 2u)
-#define FIRST_PAGE_END 4096ULL
-#define DIRECT_PHYSICAL_END 0x100000000ULL
+#define FIRST_PAGE_END ((uint64_t)PAGE_SIZE)
 #define UINT64_MAX_VALUE (~(uint64_t)0)
 
-typedef struct E820Entry {
-    unsigned long long base_address;
-    unsigned long long length;
-    uint32_t type;
-    uint32_t attributes;
-} E820Entry;
-
-typedef char E820Entry_must_be_24_bytes[(sizeof(E820Entry) == 24) ? 1 : -1];
-
-extern uint16_t e820_entry_count;
-extern uint8_t e820_detection_failed;
-extern E820Entry e820_map[E820_MAX_ENTRIES];
 /* GCC's asm names bypass MinGW's C underscore decoration. */
 extern uint8_t kernel_start[] __asm__("__kernel_start");
 extern uint8_t kernel_end[] __asm__("__kernel_end");
@@ -30,14 +19,6 @@ static uint32_t region_count;
 static uint32_t boundary_count;
 static uint8_t initialized;
 static uint8_t allocator_retired;
-
-static __attribute__((noreturn)) void memblock_panic(const char *reason)
-{
-    kprintf("Memblock panic: %s\n", reason);
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
-}
 
 static uint64_t region_end(const MemblockRegion *region)
 {
@@ -52,7 +33,7 @@ static void validate_regions(void)
     if (region_count == 0 || region_count > MEMBLOCK_MAX_REGIONS ||
         regions[0].base != 0 || regions[0].type != MEMBLOCK_RESERVED ||
         regions[0].length < FIRST_PAGE_END) {
-        memblock_panic("invalid first page or region count");
+        kernel_panic("Memblock", "invalid first page or region count");
     }
 
     for (i = 0; i < region_count; ++i) {
@@ -61,7 +42,7 @@ static void validate_regions(void)
             region->length > UINT64_MAX_VALUE - region->base ||
             (i != 0 && (region->base != previous_end ||
                          region->type == regions[i - 1].type))) {
-            memblock_panic("invalid region ordering, extent, or merge");
+            kernel_panic("Memblock", "invalid region ordering, extent, or merge");
         }
         previous_end = region_end(region);
     }
@@ -72,12 +53,12 @@ static void append_region(uint64_t base, uint64_t end, MemblockType type)
     MemblockRegion *last;
 
     if (end <= base) {
-        memblock_panic("invalid region extent");
+        kernel_panic("Memblock", "invalid region extent");
     }
     if (region_count != 0) {
         last = &regions[region_count - 1];
         if (region_end(last) > base) {
-            memblock_panic("overlapping regions");
+            kernel_panic("Memblock", "overlapping regions");
         }
         if (region_end(last) == base && last->type == type) {
             last->length += end - base;
@@ -85,7 +66,7 @@ static void append_region(uint64_t base, uint64_t end, MemblockType type)
         }
     }
     if (region_count == MEMBLOCK_MAX_REGIONS) {
-        memblock_panic("region table full");
+        kernel_panic("Memblock", "region table full");
     }
     regions[region_count].base = base;
     regions[region_count].length = end - base;
@@ -138,7 +119,7 @@ static void split_at(uint64_t address)
             continue;
         }
         if (region_count == MEMBLOCK_MAX_REGIONS) {
-            memblock_panic("region table full");
+            kernel_panic("Memblock", "region table full");
         }
         for (j = region_count; j > i + 1; --j) {
             regions[j] = regions[j - 1];
@@ -179,7 +160,7 @@ static void reserve_available(uint64_t base, uint64_t end, MemblockType type)
 
     if (end <= base || (type != MEMBLOCK_KERNEL &&
                         type != MEMBLOCK_BOOT_ALLOCATED)) {
-        memblock_panic("invalid reservation");
+        kernel_panic("Memblock", "invalid reservation");
     }
     for (i = 0; i < region_count && covered < end; ++i) {
         uint64_t next = region_end(&regions[i]);
@@ -187,12 +168,12 @@ static void reserve_available(uint64_t base, uint64_t end, MemblockType type)
             continue;
         }
         if (regions[i].base > covered || regions[i].type != MEMBLOCK_AVAILABLE) {
-            memblock_panic("reservation is not available RAM");
+            kernel_panic("Memblock", "reservation is not available RAM");
         }
         covered = next < end ? next : end;
     }
     if (covered != end) {
-        memblock_panic("reservation extends beyond known RAM");
+        kernel_panic("Memblock", "reservation extends beyond known RAM");
     }
 
     split_at(base);
@@ -215,7 +196,7 @@ void memblock_init(void)
 
     if (initialized || e820_detection_failed ||
         e820_entry_count == 0 || e820_entry_count > E820_MAX_ENTRIES) {
-        memblock_panic("E820 map missing, incomplete, or already imported");
+        kernel_panic("Memblock", "E820 map missing, incomplete, or already imported");
     }
 
     region_count = 0;
@@ -225,11 +206,11 @@ void memblock_init(void)
     for (i = 0; i < e820_entry_count; ++i) {
         uint64_t base = e820_map[i].base_address;
         uint64_t length = e820_map[i].length;
-        if (length == 0) {
+        if ((e820_map[i].attributes & 1u) == 0 || length == 0) {
             continue;
         }
         if (length > UINT64_MAX_VALUE - base) {
-            memblock_panic("E820 address overflow");
+            kernel_panic("Memblock", "E820 address overflow");
         }
         boundaries[boundary_count++] = base;
         boundaries[boundary_count++] = base + length;
@@ -249,9 +230,12 @@ void memblock_init(void)
         for (j = 0; j < e820_entry_count; ++j) {
             uint32_t priority;
             MemblockType candidate;
-            uint64_t source_end = e820_map[j].base_address + e820_map[j].length;
-            if (e820_map[j].length == 0 ||
-                e820_map[j].base_address > base || source_end < end) {
+            uint64_t source_end;
+            if ((e820_map[j].attributes & 1u) == 0 || e820_map[j].length == 0) {
+                continue;
+            }
+            source_end = e820_map[j].base_address + e820_map[j].length;
+            if (e820_map[j].base_address > base || source_end < end) {
                 continue;
             }
             candidate = e820_type(e820_map[j].type, &priority);
@@ -279,11 +263,11 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
     uint64_t mask;
 
     if (allocator_retired) {
-        memblock_panic("bootstrap allocator retired; use PMM for physical pages");
+        kernel_panic("Memblock", "bootstrap allocator retired; use PMM for physical pages");
     }
     if (!initialized || size == 0 || alignment == 0 ||
         (alignment & (alignment - 1)) != 0) {
-        memblock_panic("invalid allocation request or uninitialized map");
+        kernel_panic("Memblock", "invalid allocation request or uninitialized map");
     }
     mask = alignment - 1;
     for (i = 0; i < region_count; ++i) {
@@ -292,12 +276,12 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
         if (regions[i].type != MEMBLOCK_AVAILABLE) {
             continue;
         }
-        if (regions[i].base >= DIRECT_PHYSICAL_END) {
+        if (regions[i].base >= PHYSICAL_END) {
             break;
         }
         end = region_end(&regions[i]);
-        if (end > DIRECT_PHYSICAL_END) {
-            end = DIRECT_PHYSICAL_END;
+        if (end > PHYSICAL_END) {
+            end = PHYSICAL_END;
         }
         base = regions[i].base;
         if (base < FIRST_PAGE_END) {
@@ -318,7 +302,7 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
 void memblock_retire(void)
 {
     if (!initialized) {
-        memblock_panic("cannot retire an uninitialized allocator");
+        kernel_panic("Memblock", "cannot retire an uninitialized allocator");
     }
     /* Keep the region map and existing allocations intact for PMM reservation
        checks. There is deliberately no operation to re-enable allocations. */
@@ -328,7 +312,7 @@ void memblock_retire(void)
 uint32_t memblock_region_count(void)
 {
     if (!initialized) {
-        memblock_panic("map not initialized");
+        kernel_panic("Memblock", "map not initialized");
     }
     return region_count;
 }
@@ -336,7 +320,7 @@ uint32_t memblock_region_count(void)
 const MemblockRegion *memblock_region(uint32_t index)
 {
     if (!initialized) {
-        memblock_panic("map not initialized");
+        kernel_panic("Memblock", "map not initialized");
     }
     return index < region_count ? &regions[index] : 0;
 }
@@ -359,7 +343,7 @@ void memblock_dump(void)
 {
     uint32_t i;
     if (!initialized) {
-        memblock_panic("map not initialized");
+        kernel_panic("Memblock", "map not initialized");
     }
     kputs("XNF physical memory map [base, end):\n");
     for (i = 0; i < region_count; ++i) {

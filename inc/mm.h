@@ -1,0 +1,8 @@
+#ifndef XNF_MM_H
+#define XNF_MM_H
+
+#define PAGE_SIZE 4096u
+#define KERNEL_VIRTUAL_END 0x10000000u
+#define PHYSICAL_END 0x100000000ULL
+
+#endif

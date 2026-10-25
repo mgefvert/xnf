@@ -17,13 +17,21 @@ paging before entering the timer-driven idle loop. There is no C runtime.
   `asm/interrupts.asm` are included after switching to `BITS 32`; changes to
   included assembly files must be tracked by the CMake command's dependencies.
 - Sources under `src/` are compiled as freestanding 32-bit C with CLion's
-  MinGW GCC. The build links only kernel objects, uses `kernel.ld` for section
+  MinGW GCC and `-march=i686`. Real-mode entry checks CPUID and rejects CPU
+  families older than Pentium Pro before C runs. The build links only kernel
+  objects, uses `kernel.ld` for section
   placement, and converts the linker output to a flat image for the existing
   BIOS pipeline.
 - BIOS E820 collection remains in `asm/kernel.asm`; `src/memory.c` imports and
   displays the collected entries when called from `src/kernel.c`.
-- The assembly entry clears linker-defined `.bss` bounds before calling
-  `kernel_main`; there is no C runtime startup.
+- Entry uses a 2 KiB temporary stack inside the loaded image. Before touching
+  `.bss` or the final stack, `boot_memory_check()` validates the entire kernel
+  extent against E820 without using `.bss`, allocators, or normal console code.
+  Failure writes directly to VGA and halts. Only then may entry switch to the
+  final stack and clear `.bss`. Preserve this order; there is no C runtime.
+- Normal builds exclude C tests and deliberate fault probes. A separate build
+  configured with `-DXNF_BUILD_TESTS=ON` includes `tests/kernel/*.c` and runs
+  the PMM boot self-test. Test declarations belong in `inc/kernel_test.h`.
 - The boot sector loads the kernel in one BIOS extended-read request, limited
   to 127 sectors.
 
@@ -60,26 +68,39 @@ where they affect addresses or BIOS calls.
   conservative precedence for reserved memory. Preserve its overflow checks,
   region validation, and reservation of the complete linker-defined kernel
   extent, including `.bss` and the 16 KiB stack.
-- `memblock_alloc` is a bootstrap physical allocator. Existing call sites run
-  before enabling paging. `pmm_init()` permanently retires new bootstrap
+- Assembly normalizes legacy 20-byte E820 attributes to 1 (enabled). Both
+  early validation and memblock import ignore extended entries with bit 0
+  clear, including their lengths. Keep `inc/e820.h` synchronized with assembly.
+- `memblock_alloc` is a bootstrap physical allocator; ordinary boot currently
+  makes no allocations. Any future uses must run before paging. `pmm_init()`
+  permanently retires new bootstrap
   allocations after importing reservations; later attempts panic with a clear
   diagnostic. Existing allocations and the region map remain valid.
 - `paging_prepare()` builds supervisor-only, writable, non-PAE 4 KiB identity
   mappings. Page zero remains unmapped. The mapped extent includes kernel code,
   data, stack, GDT, IDT, interrupt handlers, VGA text memory, and all bootstrap
   allocations, including the page directory and tables themselves.
-- Preserve recalculation of the required mapping extent after each table
-  allocation; a new table can extend the range that must be mapped.
+- The first 256 MiB of virtual addresses belong to the kernel; higher
+  addresses remain unmapped for future user processes. This is a virtual
+  reservation, not a reservation of 256 MiB of physical RAM.
+- All 64 kernel page tables (256 KiB) and the directory (4 KiB) are preallocated
+  in page-aligned `.bss` and covered by the permanent identity map. Preparation
+  allocates nothing; its required extent includes all linker reservations and
+  any earlier bootstrap allocations. `paging_identity_end` marks the
+  permanent prefix and start of the VMM arena. Reject boot extents that leave
+  no arena or would map the future user range.
 - `paging_enable()` follows `paging_prepare()` immediately. The cdecl assembly
   routine `paging_activate(directory_physical)` saves EFLAGS, disables maskable
-  interrupts, clears CR4.PAE/PSE, loads CR3, and sets CR0.PG while preserving
-  other CR0 bits. It restores EFLAGS after the transition and returns to C.
+  interrupts, clears CR4.PAE/PSE, loads CR3, and sets CR0.PG/WP while preserving
+  other CR0 bits. WP enforces supervisor read-only mappings. It restores
+  EFLAGS after the transition and returns to C.
   Activation allocates no memory and writes no page-table entries.
-- C checks CR0.PG, CR3, and CR4.PAE/PSE before reporting success. Page-table
+- C checks CR0.PG/WP, CR3, and CR4.PAE/PSE before reporting success. Page-table
   verification currently runs before activation; hardware can subsequently
   set accessed/dirty bits, so exact entry comparisons need care afterward.
-- The writable identity map is a bootstrap design. Read-only sections, stack
-  guard pages, and a general mapping API are future work.
+- The writable permanent identity prefix is a bootstrap design. Read-only
+  kernel sections and stack guard pages remain future work. Runtime map,
+  unmap, and protect are internal VMM operations; `paging_query` is read-only.
 
 ## Physical memory manager (stage 1)
 
@@ -88,13 +109,13 @@ where they affect addresses or BIOS calls.
   all 1,048,576 physical frames below 4 GiB. The linker reservation includes
   the bitmap. Only full pages of normalized `MEMBLOCK_AVAILABLE` regions are
   managed; page zero and all kernel/bootstrap reservations stay unavailable.
-- `pmm_alloc_page()` returns a physical address, preferring frames at or above
-  `0x10000000` to preserve low memory. `pmm_alloc_page_low()` restricts allocation
-  to physical addresses below that boundary. Zero indicates failure. Neither
-  function establishes a virtual mapping or clears the allocated frame.
-- The intended kernel identity window is the lowest 256 MiB, but the existing
-  paging setup currently maps only its required extent (normally 4 MiB).
-  Being below the low limit does not itself prove a frame is currently mapped.
+- `pmm_alloc_page()` returns a physical address using one circular bitmap
+  search and one word hint. There is no low/high split or promised allocation
+  order. Zero indicates failure; allocation neither maps nor clears a frame.
+- The kernel virtual range is the lowest 256 MiB, but the permanent identity
+  prefix maps only its required extent (normally 4 MiB). The remaining kernel
+  virtual addresses are available to VMM allocations with arbitrary backing.
+  A low physical address does not itself prove a frame is currently mapped.
   Check existing mappings before dereferencing; never directly dereference an
   ordinary physical allocation without a suitable mapping.
 - A set bitmap bit represents either a reservation or a PMM allocation.
@@ -107,16 +128,55 @@ where they affect addresses or BIOS calls.
   and reports the handover. The PMM is the sole physical page allocator from
   that point. Retirement only blocks new bootstrap allocations; it preserves
   all reservation metadata used by PMM free checks and has no reverse operation.
-- `pmm_self_test()` checks low-page mappings before pattern writes, releases
-  low/general allocations, checks counters and invalid frees, and prints its
-  results. It installs no mappings and never dereferences general allocations.
-- Run `python tests/pmm_qemu.py --build cmake-build-debug` after building.
+- The test-build-only `pmm_self_test()` checks distinct/aligned physical loans,
+  counters, and invalid frees. It never maps or dereferences physical frames.
+- Run `python tests/pmm_qemu.py --build cmake-build-tests` after building with
+  `-DXNF_BUILD_TESTS=ON`.
   This checks every bitmap bit, 128/512 MiB boots, timer progress, and fault
   logs. With GDB available (or `--gdb PATH`), synthetic E820 tests also cover
   overlapping reservations in both orders, partial frames, disjoint regions,
   and the last frame below 4 GiB. A separate disposable guest attempts a late
   bootstrap allocation and verifies the retirement panic, halt, and unchanged
   PMM state. Test artifacts stay in the build directory.
+
+## Kernel virtual page allocator
+
+- `vmm_init()` runs after PMM initialization/self-test, before the timer loop.
+  The public interface in `inc/vmm.h` provides zeroed, writable, supervisor-only
+  contiguous virtual page allocations and whole-allocation freeing; no heap
+  exists yet. Physical frames may be noncontiguous and above 256 MiB.
+- Three fixed bitmaps (24 KiB total in `.bss`) track occupancy and exact
+  allocation boundaries. Permanent-prefix slots are never allocated/freed.
+  Invalid sizes/exhaustion return null; invalid/interior/double frees return
+  false. Corrupt internal ownership/mappings panic. Preserve complete rollback
+  after partial physical allocation and unmap/invalidate before PMM release.
+- `paging_internal.h` is only for VMM implementation/tests. Map/unmap/protect
+  require virtual-slot ownership in normal context, never change physical
+  ownership, and cannot change the permanent prefix or future user range.
+  Do not bypass VMM bookkeeping or free backing frames directly through PMM.
+- VMM operations preserve IF but do not mask IRQs during scans or zeroing.
+  Individual PMM operations and PTE edits/invalidation mask IRQs briefly.
+  Transactions rely on one CPU, no preemptive scheduler, and no IRQ/exception
+  allocation. Add synchronization before introducing preemption or SMP.
+- Run `python tests/vmm_qemu.py --build cmake-build-tests` as well as the PMM
+  suite. It requires GDB (optional `--gdb PATH`), checks real 128/512 MiB guests,
+  complete PMM/VMM bitmap restoration, page tables, timers, exhaustion/rollback,
+  fragmentation, permissions, IF, and four disposable expected-fault guests.
+  A controlled fixture with high frames and a reserved hole guarantees high,
+  noncontiguous backing independently of PMM allocation order. The ordinary
+  512 MiB guest verifies IRQ delivery during a large allocation.
+  Explicit VMM test entry points are not run during ordinary boot: synthetic
+  PMM E820 fixtures can describe high physical RAM not actually backed by QEMU.
+- The linker caps the kernel below the VGA aperture; preserve memblock's
+  stronger E820 check and the pre-.bss check of the entire kernel reservation.
+  See `KERNEL_MEMORY.md` for contracts and the virtual layout.
+- Run `python tests/boot_qemu.py --build cmake-build-debug` and against the
+  test build. It validates CPU rejection, legacy attributes, normal boots,
+  and early rejection with sentinel bytes proving `.bss` and the final stack
+  were not touched. Shared `tests/qemu_test.py` has no import-time execution.
+- Shared memory constants live in `inc/mm.h`. Normal post-.bss fatal errors
+  use `kernel_panic(subsystem, reason)`, which disables IRQs before console
+  output. Early boot must use its separate raw VGA diagnostic.
 
 ## Interrupts and diagnostics
 
@@ -136,13 +196,6 @@ where they affect addresses or BIOS calls.
 
 ## Review follow-ups
 
-- E820 extended attributes are collected but not honored during import. Handle
-  disabled 24-byte entries while preserving valid legacy 20-byte entries,
-  whose stored attributes are currently zero; simply rejecting every entry
-  with attribute bit 0 clear would discard those legacy entries.
-- Establish an explicit minimum CPU requirement: paging activation accesses
-  CR4, so the E820 routine's local "80386 or later" assumption is insufficient
-  as a requirement for the entire kernel.
 - Consider an interrupt interface header and compile-time exception-frame
   layout checks as that interface grows. Keep hardware entry/exit in assembly
   and bookkeeping and policy in C.

@@ -3,6 +3,10 @@
 #include "memory.h"
 #include "paging.h"
 #include "pmm.h"
+#include "vmm.h"
+#ifdef XNF_BUILD_TESTS
+#include "kernel_test.h"
+#endif
 
 #define TIMER_DISPLAY_INTERVAL 18u
 
@@ -27,7 +31,10 @@ void kernel_main(void)
     paging_prepare();
     paging_enable();
     pmm_init();
+#ifdef XNF_BUILD_TESTS
     pmm_self_test();
+#endif
+    vmm_init();
 
     kprintf("Kernel started.\n");
 

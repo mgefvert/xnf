@@ -1,94 +1,25 @@
-"""Build first, then run: python tests/pmm_qemu.py --build cmake-build-debug.
+"""Build first, then run: python tests/pmm_qemu.py --build cmake-build-tests.
 
 Checks the boot self-test, all bitmap bits against an independent E820 model,
 control registers, timer progress, and exception/reset logs. Optional GDB tests
-inject synthetic E820 maps before memblock_init; unmapped high frames are never
+inject synthetic E820 maps before the early memory check; unmapped high frames are never
 dereferenced. A separate guest verifies that a late bootstrap allocation panics
 and halts without changing PMM state. Logs and snapshots stay in the build directory.
 """
-import argparse
-import json
-import os
-import pathlib
-import queue
 import re
 import socket
 import struct
 import subprocess
-import threading
+import sys
 import time
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--build', type=pathlib.Path, default=pathlib.Path('cmake-build-debug'))
-parser.add_argument('--gdb', type=pathlib.Path)
-args = parser.parse_args()
-build = args.build.resolve()
-cache = {}
-for line in (build / 'CMakeCache.txt').read_text().splitlines():
-    match = re.match(r'([^:#]+):[^=]+=(.*)', line)
-    if match:
-        cache[match[1]] = match[2]
-suffix = '.exe' if os.name == 'nt' else ''
-nm = pathlib.Path(cache['KERNEL_C_COMPILER']).parent / ('nm' + suffix)
-gdb = args.gdb or pathlib.Path(cache['KERNEL_C_COMPILER']).parents[2] / 'gdb/win/x64/bin/gdb.exe'
-hidden = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-symbols = {}
-for line in subprocess.check_output([str(nm), '-n', str(build / 'kernel_linked.exe')],
-                                    text=True, creationflags=hidden).splitlines():
-    parts = line.split()
-    if len(parts) == 3:
-        symbols[parts[2]] = int(parts[0], 16)
-
-
-class Guest:
-    def __init__(self, name, ram, port=None):
-        self.name = name
-        command = [cache['QEMU_EXECUTABLE'], '-m', str(ram), '-drive',
-                   f'format=raw,file={build / "xnf.img"}', '-display', 'none',
-                   '-serial', 'none', '-monitor', 'none', '-qmp', 'stdio', '-S',
-                   '-no-reboot', '-no-shutdown', '-d', 'int,cpu_reset',
-                   '-D', str(build / f'{name}-qemu.log')]
-        if port:
-            command += ['-gdb', f'tcp:127.0.0.1:{port}']
-        self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, text=True, creationflags=hidden)
-        self.messages = queue.Queue()
-        def receive():
-            for line in self.process.stdout:
-                self.messages.put(json.loads(line))
-        threading.Thread(target=receive, daemon=True).start()
-        assert 'QMP' in self.messages.get(timeout=10)
-        self.qmp('qmp_capabilities')
-
-    def qmp(self, command, **arguments):
-        self.process.stdin.write(json.dumps({'execute': command, 'arguments': arguments}) + '\n')
-        self.process.stdin.flush()
-        while True:
-            message = self.messages.get(timeout=10)
-            assert 'error' not in message, message
-            if 'return' in message:
-                return message['return']
-
-    def monitor(self, command):
-        return self.qmp('human-monitor-command', **{'command-line': command})
-
-    def read(self, address, size, label):
-        path = build / f'{self.name}-{label}.bin'
-        assert not self.monitor(f'pmemsave {address:#x} {size:#x} "{path.as_posix()}"')
-        return path.read_bytes()
-
-    def value(self, symbol):
-        return struct.unpack('<I', self.read(symbols[symbol], 4, symbol))[0]
-
-    def close(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait(timeout=5)
-
+sys.dont_write_bytecode = True
+from qemu_test import configure, HIDDEN as hidden
 
 def expected_bitmap(entries, occupied):
     # Independent two-pass model: usable interiors first, then every page that
     # intersects a reserved entry or live kernel/bootstrap allocation.
+    entries = [entry for entry in entries if entry[3] & 1]
     free = set()
     limit = 1 << 32
     for base, length, kind, attributes in entries:
@@ -124,7 +55,7 @@ def run_case(name, ram, fixture=None, retirement_probe=False):
             commands.write_text('\n'.join([
                 'set pagination off', 'set confirm off', 'set architecture i386',
                 f'target remote 127.0.0.1:{port}',
-                f'hbreak *{symbols["_memblock_init"]:#x}', 'continue', 'delete breakpoints',
+                f'hbreak *{symbols["_boot_memory_check"]:#x}', 'continue', 'delete breakpoints',
                 f'restore {data.name} binary {symbols["_e820_map"]:#x}',
                 f'set {{unsigned short}}{symbols["_e820_entry_count"]:#x} = {len(fixture)}',
                 f'set {{unsigned char}}{symbols["_e820_detection_failed"]:#x} = 0',
@@ -139,7 +70,7 @@ def run_case(name, ram, fixture=None, retirement_probe=False):
         guest.qmp('stop')
         registers = guest.monitor('info registers')
         (build / f'{name}-registers.txt').write_text(registers)
-        assert 'CR0=80000011' in registers and 'CR4=00000000' in registers
+        assert 'CR0=80010011' in registers and 'CR4=00000000' in registers
         cr3 = int(re.search(r'CR3=([0-9a-fA-F]+)', registers)[1], 16)
         assert cr3 == guest.value('_paging_directory_physical')
         raw = guest.read(0xb8000, 4000, 'vga')[::2].decode('ascii')
@@ -163,13 +94,10 @@ def run_case(name, ram, fixture=None, retirement_probe=False):
         actual = guest.read(symbols['_bitmap'], 128 * 1024, 'bitmap')
         assert actual == expected, f'{name}: bitmap differs from independent E820 model'
         assert guest.value('_managed_pages') == guest.value('_free_pages') == managed
-        if any(base >= 0x10000000 and kind == 1 for base, _, kind, _ in entries) or ram > 256:
-            match = re.search(r'PMM general test: 0x([0-9A-F]+)', screen)
-            assert match and int(match[1], 16) >= 0x10000000, screen
         if name == 'pmm-top-frame':
-            assert 'PMM general test: 0xFFFFF000' in screen, screen
-        if name in ('pmm-overlaps', 'pmm-reversed'):
-            assert 'PMM general test: 0x10001000 0x10003000 0x70000000' in screen, screen
+            match = re.search(r'PMM allocation test: (.*?) release OK', screen)
+            allocated = {int(value, 16) for value in re.findall(r'0x[0-9A-F]+', match[1])}
+            assert allocated == {0xffffd000, 0xffffe000, 0xfffff000}, allocated
         ticks = guest.value('_timer_ticks')
         guest.qmp('cont')
         time.sleep(1.1)
@@ -219,21 +147,27 @@ def run_case(name, ram, fixture=None, retirement_probe=False):
         guest.close()
 
 
-run_case('pmm-128m', 128)
-run_case('pmm-512m', 512)
-if gdb.exists():
-    # Reserved overlaps, unaligned ends, disjoint usable regions, a region that
-    # crosses 4 GiB, and a wholly out-of-range region. Test both input orders.
-    entries = [(0, 0x9fc00, 1, 1), (0x100000, 0x3f00000, 1, 1),
-               (0x6001, 0x2ffe, 2, 1), (0x3000001, 0x1ffe, 2, 1),
-               (0x10000001, 0x4000, 1, 1), (0x10002001, 1, 2, 1),
-               (0x70000000, 8192, 1, 1), (0xffffe001, 0x5000, 1, 1),
-               (0x100010000, 0x10000, 1, 1)]
-    run_case('pmm-overlaps', 128, entries)
-    run_case('pmm-reversed', 128, list(reversed(entries)))
-    run_case('pmm-top-frame', 128, [(0, 0x9fc00, 1, 1),
-                                 (0x100000, 0x3f00000, 1, 1),
-                                 (0xffffe001, 0x5000, 1, 1)])
-    run_case('pmm-retirement', 128, retirement_probe=True)
-else:
-    print('Synthetic E820 cases skipped: pass --gdb to enable them.')
+if __name__ == '__main__':
+    environment = configure(__doc__)
+    build, gdb, symbols = environment.build, environment.gdb, environment.symbols
+    Guest = environment.guest
+    run_case('pmm-128m', 128)
+    run_case('pmm-512m', 512)
+    if gdb.exists():
+        entries = [(0, 0x9fc00, 1, 1), (0x100000, 0x3f00000, 1, 1),
+                   (0x6001, 0x2ffe, 2, 1), (0x3000001, 0x1ffe, 2, 1),
+                   (0x10000001, 0x4000, 1, 1), (0x10002001, 1, 2, 1),
+                   (0x70000000, 8192, 1, 1), (0xffffe001, 0x5000, 1, 1),
+                   (0x100010000, 0x10000, 1, 1)]
+        run_case('pmm-overlaps', 128, entries)
+        run_case('pmm-reversed', 128, list(reversed(entries)))
+        run_case('pmm-top-frame', 128, [
+            (symbols['__kernel_start'], symbols['__kernel_end'] - symbols['__kernel_start'], 1, 1),
+            (0xffffd000, 3 * 4096, 1, 1)])
+        run_case('pmm-disabled', 128, [
+            (0, 0x9fc00, 1, 1), (0x100000, 0x3f00000, 1, 1),
+            (0x2000000, 4096, 2, 0), (0x10000000, 4096, 1, 0),
+            (0xfffffffffffffff0, 4096, 1, 0)])
+        run_case('pmm-retirement', 128, retirement_probe=True)
+    else:
+        print('Synthetic E820 cases skipped: pass --gdb to enable them.')

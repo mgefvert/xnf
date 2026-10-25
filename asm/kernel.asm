@@ -17,6 +17,7 @@ E820_MAX_ENTRIES equ 32
 E820_MAP_SIZE    equ E820_ENTRY_SIZE * E820_MAX_ENTRIES
 
 extern _kernel_main             ; MinGW i386 COFF prefixes C names with '_'.
+extern _boot_memory_check
 extern __bss_start
 extern __bss_end
 extern __kernel_stack_top       ; Linker-defined physical address in the flat segment.
@@ -30,7 +31,33 @@ start:
     mov ds, ax
     mov es, ax
     mov ss, ax
-    mov sp, 0xFFFE
+    ; The temporary stack is part of the BIOS-loaded image, not unvalidated
+    ; .bss or the final stack. It also serves the first protected-mode C call.
+    mov eax, boot_stack_top
+    sub eax, KERNEL_LOAD_ADDRESS
+    mov sp, ax
+
+    ; Require i686 (Pentium Pro or later), matching C's -march=i686. Test for
+    ; CPUID before using it; CR4 and supervisor write protection are required.
+    pushfd
+    pop ecx
+    mov eax, ecx
+    xor eax, 1 << 21
+    push eax
+    popfd
+    pushfd
+    pop eax
+    push ecx
+    popfd
+    xor eax, ecx
+    test eax, 1 << 21
+    jz unsupported_cpu
+    mov eax, 1
+    cpuid
+    shr eax, 8
+    and eax, 0xF
+    cmp eax, 6
+    jb unsupported_cpu
 
     ; BIOS E820 is only available before entering protected mode.
     ; CF is set if the map could not be collected completely.
@@ -53,6 +80,22 @@ start:
     ; BITS 16 needs an operand-size override so this far pointer has a 32-bit offset.
     jmp dword KERNEL_CODE_SELECTOR:protected_mode_entry_address
 
+unsupported_cpu:
+    mov si, RM_OFFSET(cpu_message)
+.print:
+    lodsb
+    test al, al
+    jz .halt
+    mov ah, 0x0E
+    mov bx, 7
+    int 0x10
+    jmp .print
+.halt:
+    cli
+    hlt
+    jmp .halt
+cpu_message: db "Unsupported CPU: i686 required", 0
+
 ; Collect the BIOS E820 map into e820_map.
 ;
 ; Input assumptions:
@@ -73,8 +116,8 @@ start:
 ;     20      4   uint32 attributes
 ;
 ; The attribute field is initialized to 1 before each call as required by the
-; 24-byte E820 interface. If the BIOS reports a legacy 20-byte entry, that
-; field is reset to zero. The full map is cleared before collection.
+; 24-byte E820 interface. Legacy 20-byte entries are normalized to enabled
+; (attributes = 1), so import can distinguish them from disabled extended entries.
 memory_detect:
     pushad
     push ds
@@ -86,8 +129,7 @@ memory_detect:
     push cs
     pop es
 
-    ; Clear all slots so legacy 20-byte entries have zero attributes and any
-    ; unused slots remain zero as well.
+    ; Clear all slots; unused slots remain zero.
     xor ax, ax
     mov di, RM_OFFSET(_e820_map)
     mov cx, E820_MAP_SIZE / 2
@@ -131,6 +173,8 @@ memory_detect:
     jne .failure
 
     ; BIOSes return either a 20-byte legacy entry or the requested 24 bytes.
+global memory_detect.response_size
+.response_size:
     cmp ecx, 20
     je .legacy_entry
     cmp ecx, E820_ENTRY_SIZE
@@ -138,7 +182,7 @@ memory_detect:
     jmp .entry_ready
 
 .legacy_entry:
-    mov dword [es:di + 20], 0
+    mov dword [es:di + 20], 1
 
 .entry_ready:
     mov [RM_OFFSET(_e820_continuation)], ebx
@@ -159,7 +203,7 @@ memory_detect:
     stc
     ret
 
-; BIOS-reported E820 entries are kept verbatim in their original order.
+; E820 entries retain BIOS order; legacy attributes are normalized to enabled.
 align 4, db 0
 global _e820_entry_count
 global _e820_detection_failed
@@ -210,7 +254,10 @@ protected_mode_entry:
     mov gs, ax
     mov ss, ax
 
-    ; Use the top of the linker-reserved stack; x86 grows the stack downward.
+    ; Validate the complete destination extent BEFORE touching .bss or using
+    ; the final stack. The temporary stack lives in the loaded image.
+    mov esp, boot_stack_top
+    call _boot_memory_check
     mov esp, __kernel_stack_top
     cld
 
@@ -231,3 +278,8 @@ protected_mode_entry:
 
 %include "paging.asm"
 %include "interrupts.asm"
+
+section .data
+align 16, db 0
+boot_stack: times 2048 db 0
+boot_stack_top:

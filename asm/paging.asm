@@ -18,7 +18,7 @@ _paging_activate:
     mov eax, [esp + 8]        ; Argument follows saved EFLAGS and return address.
     mov cr3, eax
     mov eax, cr0
-    or eax, 0x80000000        ; Set PG, preserving PE and all other CR0 bits.
+    or eax, 0x80010000        ; PG and WP: supervisor writes honor read-only PTEs.
     mov cr0, eax
     jmp short .enabled       ; Continue fetching from the identity-mapped code.
 .enabled:

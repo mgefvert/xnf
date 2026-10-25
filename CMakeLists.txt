@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(xnf LANGUAGES C)
 
+option(XNF_BUILD_TESTS "Include disposable kernel/QEMU test entry points" OFF)
+
 find_program(NASM_EXECUTABLE nasm REQUIRED)
 find_program(QEMU_EXECUTABLE qemu-system-i386 REQUIRED)
 
@@ -53,6 +55,11 @@ add_custom_command(
 file(GLOB KERNEL_C_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c"
 )
+if(XNF_BUILD_TESTS)
+    file(GLOB KERNEL_TEST_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/kernel/*.c")
+    list(APPEND KERNEL_C_SOURCES ${KERNEL_TEST_SOURCES})
+endif()
 file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/inc/*.h"
 )
@@ -61,18 +68,18 @@ file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
 # The real kernel objects are still built by the custom MinGW commands below.
 add_library(kernel_c_model OBJECT EXCLUDE_FROM_ALL ${KERNEL_C_SOURCES})
 target_include_directories(kernel_c_model PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/inc")
-# Bootstrap never enables SSE/MMX CPU state.
-target_compile_options(kernel_c_model PRIVATE
-    -m32
-    -mno-sse
-    -mno-mmx
-    -ffreestanding
-    -fno-builtin
-    -fno-pie
-    -fno-stack-protector
-    -fno-asynchronous-unwind-tables
-    -fno-unwind-tables
+# Explicit i686 minimum; assembly checks CPUID before entering C. Keep the
+# IDE model and actual freestanding compile flags identical.
+set(KERNEL_C_FLAGS
+    -m32 -march=i686 -mno-sse -mno-mmx
+    -ffreestanding -fno-builtin -fno-pie -fno-stack-protector
+    -fno-asynchronous-unwind-tables -fno-unwind-tables
+    -Wall -Wextra -Werror
 )
+if(XNF_BUILD_TESTS)
+    list(APPEND KERNEL_C_FLAGS -DXNF_BUILD_TESTS=1)
+endif()
+target_compile_options(kernel_c_model PRIVATE ${KERNEL_C_FLAGS})
 
 set(KERNEL_C_OBJECTS)
 foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
@@ -82,16 +89,8 @@ foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
     add_custom_command(
         OUTPUT "${KERNEL_C_OBJECT}"
         COMMAND "${KERNEL_C_COMPILER}"
-            -m32
-            -mno-sse
-            -mno-mmx
+            ${KERNEL_C_FLAGS}
             "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
-            -ffreestanding
-            -fno-builtin
-            -fno-pie
-            -fno-stack-protector
-            -fno-asynchronous-unwind-tables
-            -fno-unwind-tables
             -c "${KERNEL_C_SOURCE}"
             -o "${KERNEL_C_OBJECT}"
         DEPENDS

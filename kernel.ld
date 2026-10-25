@@ -50,6 +50,7 @@ SECTIONS
 
     /* Exclusive end includes the entire reserved bootstrap stack. */
     __kernel_end = .;
+    ASSERT(__kernel_end <= 0xA0000, "kernel extent overlaps VGA/firmware aperture")
 
     /DISCARD/ :
     {
