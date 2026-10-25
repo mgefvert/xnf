@@ -9,6 +9,7 @@
 #include "paging.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "kheap.h"
 #ifdef XNF_BUILD_TESTS
 #include "kernel_test.h"
 #endif
@@ -47,6 +48,7 @@ void kernel_main(void)
     pmm_self_test();
 #endif
     vmm_init();
+    kheap_init();
 
     kprintf("Kernel started.\n");
 

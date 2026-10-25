@@ -12,6 +12,7 @@ in the technical guides.
 | [KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md) | Initialization order, scope, or subsystem boundaries |
 | [KERNEL_BOOT.md](KERNEL_BOOT.md) | BIOS entry, CPU checks, addressing, GDT, stacks, or linker layout |
 | [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | E820, memblock, PMM, paging, VMM, or synchronization |
+| [KERNEL_HEAP.md](KERNEL_HEAP.md) | Byte allocations, splitting/coalescing, calloc, or extent reclamation |
 | [KERNEL_IO.md](KERNEL_IO.md) | VGA output, cursor/color handling, formatting, or port I/O |
 | [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exception frames, IDT/PIC, timers, faults, or idle behavior |
 | [KERNEL_BUILD.md](KERNEL_BUILD.md) | Compiler flags, generated artifacts, build dependencies, or QEMU tests |
@@ -32,8 +33,8 @@ in the technical guides.
   physical allocation as a pointer or bypass VMM ownership through raw paging.
 - Keep hardware entry/exit in assembly and policy/bookkeeping in C. Changes
   to assembly exception push order must update the C frame layout together.
-- Work within the current scope: one CPU, non-preemptive normal-context VMM
-  allocation, and no process address spaces or heap unless requested.
+- Heap and VMM allocation require one CPU and non-preemptive normal context.
+  Do not introduce process address spaces or new allocation contexts unless requested.
 
 ## Validation workflow
 
@@ -48,9 +49,10 @@ python tests/boot_qemu.py --build cmake-build-debug
 python tests/boot_qemu.py --build cmake-build-tests
 python tests/pmm_qemu.py --build cmake-build-tests
 python tests/vmm_qemu.py --build cmake-build-tests
+python tests/kheap_qemu.py --build cmake-build-tests
 ```
 
-Run PMM/VMM suites for memory changes, boot checks for startup/linker changes,
+Run PMM/VMM/heap suites for memory changes, boot checks for startup/linker changes,
 and the affected QEMU checks for console/interrupt changes. Check successful
 initialization, control registers, continued timer progress, and fault/reset
 logs. Discover addresses from symbols and CR3; never hard-code a page-directory

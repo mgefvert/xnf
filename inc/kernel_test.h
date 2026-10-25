@@ -9,5 +9,6 @@
 /* Present only in builds configured with -DXNF_BUILD_TESTS=ON. */
 void pmm_self_test(void);
 void vmm_self_test(void);
+void kheap_self_test(void);
 
 #endif

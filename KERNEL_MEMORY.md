@@ -1,15 +1,16 @@
 # Kernel memory in XNF
 
-Memory management has three ownership layers:
+Memory management has four ownership layers:
 
 | Layer | Responsibility | Result |
 | --- | --- | --- |
 | Memblock (`src/memory.c`) | Normalize firmware ranges and reserve bootstrap memory | Physical byte ranges |
 | PMM (`src/pmm.c`) | Allocate/free individual available frames | Physical addresses |
 | VMM (`src/vmm.c`) | Own virtual ranges and map PMM frames into them | Usable kernel pointers |
+| Heap (`src/kheap.c`) | Divide VMM extents into aligned byte-sized objects | Object payload pointers |
 
 `src/paging.c` supplies translation mechanics to VMM, without owning frames.
-The kernel has no byte-granularity heap yet. Start with the
+See [KERNEL_HEAP.md](KERNEL_HEAP.md) for byte-granularity allocation. Start with the
 [overview](KERNEL_OVERVIEW.md); build/test commands are in
 [KERNEL_BUILD.md](KERNEL_BUILD.md).
 
@@ -76,7 +77,7 @@ allocation never returns address zero. No memory is cleared by
 `memblock_alloc()`; callers must initialize it if needed.
 
 `kernel_main()` dumps the map, prepares and enables paging, initializes the
-PMM (which permanently retires `memblock_alloc()`), then initializes the VMM
+PMM (which permanently retires `memblock_alloc()`), then initializes VMM and heap
 before entering the timer-driven idle loop. The PMM self-test runs only in
 test builds. Ordinary boot makes no bootstrap allocations now that all paging
 structures are static; the memblock allocator remains available for future
@@ -193,7 +194,8 @@ locks or TLB shootdowns. The caller must stop using memory before freeing it
 and must not separately free its backing frames through PMM. As with ordinary pointer allocators, a stale pointer cannot be detected
 after its address has been reused for a new allocation.
 
-There is no `kmalloc`/`kfree` heap yet. Kernel section protection, stack guards,
+The [heap](KERNEL_HEAP.md) now provides `kmalloc`, `kcalloc`, and `kfree` on top
+of VMM. Kernel section protection, stack guards,
 demand paging, process address spaces, and swapping remain future work.
 
 ## Reading the bit operations
@@ -237,7 +239,8 @@ if (buffer != 0) {
 
 Call only after `vmm_init()` in normal non-preemptive execution context.
 A frame number from `pmm_alloc_page()` must be mapped before it is used as
-memory; use VMM for ordinary kernel allocations. Do not separately free a
+memory; use the heap for ordinary objects and VMM for page-sized interfaces.
+Do not separately free a
 VMM allocation's physical frames or modify its mappings through the internal
 paging interface. See [validation coverage](KERNEL_BUILD.md#validation) for
 exhaustion, rollback, permission, and ownership checks.

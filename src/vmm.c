@@ -191,3 +191,8 @@ uint32_t vmm_free_page_count(void)
 {
     return free_virtual_pages;
 }
+
+bool vmm_is_initialized(void)
+{
+    return initialized;
+}

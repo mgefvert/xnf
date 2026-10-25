@@ -94,6 +94,7 @@ python tests/boot_qemu.py --build cmake-build-debug
 python tests/boot_qemu.py --build cmake-build-tests
 python tests/pmm_qemu.py --build cmake-build-tests
 python tests/vmm_qemu.py --build cmake-build-tests
+python tests/kheap_qemu.py --build cmake-build-tests
 ```
 
 Shared infrastructure lives in `tests/qemu_test.py`, with no argument parsing
@@ -135,3 +136,28 @@ Four further guests verify exact fault addresses/error codes and halted IRQ
 state for null, freed, read-only-write, and user-boundary accesses. Logs and
 snapshots stay in the build directory. VMM write fixtures describe only RAM
 actually backed by the emulator; PMM-only fixtures may describe synthetic RAM.
+
+### Heap checks
+
+`tests/kheap_qemu.py` requires GDB and runs guest-side tests from
+`tests/kernel/kheap_test.c`. Normal 128/512 MiB guests and a high-memory,
+physically fragmented fixture cover alignment, non-overlap, boundary sizes,
+data independence, block splitting/coalescing, dirty-block and multi-page
+calloc, multiplication/alignment/page-rounding overflow, and mixed allocation
+orders. A separate VMM reservation forces nonadjacent heap extents.
+
+Physical/virtual exhaustion must preserve live payloads and leave failed
+growth without ownership leaks. Existing free blocks must still work without
+new pages, and minimal growth must use a final available page when four-page
+growth fails. Releasing pressure must allow allocation to recover. Full PMM
+and VMM bitmaps, page tables, counters, and the empty extent list are checked
+after positive tests, with continued timer progress and preserved IF.
+
+A preinitialization guest checks null allocation/no-op null free before heap
+startup. Disposable negative guests verify aligned/unaligned interior frees,
+double frees both inside live extents and after unmapping, foreign VMM and
+unmapped addresses, and repeated/out-of-order initialization. These must panic
+and remain halted with IRQs disabled and stable ownership. A final guest writes
+through a released extent pointer and must fault at that address with the
+expected non-present supervisor-write error code. See [KERNEL_HEAP.md](KERNEL_HEAP.md)
+for the supported API and execution model.

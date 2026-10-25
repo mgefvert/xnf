@@ -12,6 +12,7 @@ initialize globals, allocate memory, or print messages on its behalf.
 | --- | --- |
 | [KERNEL_BOOT.md](KERNEL_BOOT.md) | From BIOS entry to C: CPU requirements, addresses, descriptors, stacks |
 | [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | Firmware memory maps, physical ownership, paging, virtual allocation |
+| [KERNEL_HEAP.md](KERNEL_HEAP.md) | Aligned byte allocations, calloc, coalescing, and page reclamation |
 | [KERNEL_IO.md](KERNEL_IO.md) | VGA cells, hardware cursor, port I/O, formatting API |
 | [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exceptions, normalized stack frames, PIC, timer, idle loop |
 | [KERNEL_BUILD.md](KERNEL_BUILD.md) | Freestanding toolchain, disk-image pipeline, optional tests and validation |
@@ -34,7 +35,8 @@ The technical guides explain current behavior and limitations for any reader.
 5. C initializes the console and normalized memblock map, prepares and enables
    paging, initializes PMM, and permanently retires bootstrap allocation.
    A test build additionally runs the PMM ownership self-test.
-6. VMM initializes its virtual arena. The normal kernel loop prints occasional
+6. VMM initializes its virtual arena, then the heap initializes without reserving
+   backing pages. The normal kernel loop prints occasional
    progress dots and uses `STI; HLT` to wait for interrupts.
 
 The order is part of correctness: early C cannot use zero-initialized globals
@@ -51,6 +53,7 @@ when the infrastructure and allocators are ready.
 | `src/pmm.c` | Physical frame ownership, independent of virtual addresses |
 | `src/paging.c`, `asm/paging.asm` | Page-table mechanics and hardware activation |
 | `src/vmm.c` | Virtual range ownership and mappings backed by PMM frames |
+| `src/kheap.c` | Byte-sized object allocations inside VMM-backed extents |
 | `src/conio.c` | Text output, formatting, and cursor/color state |
 | `asm/interrupts.asm`, `src/interrupts.c` | Hardware entry/exit and exception diagnostics |
 | `src/kernel.c` | Initialization order, timer bookkeeping, idle policy |
@@ -68,7 +71,8 @@ reserved for future user processes and remain unmapped. This boundary says
 nothing about where the kernel's physical RAM must come from.
 
 VMM can return zeroed, virtually contiguous allocations in units of 4 KiB.
-There is no `kmalloc` heap, user process, syscall layer, filesystem, keyboard
+The heap provides 16-byte-aligned `kmalloc`/`kcalloc` objects and `kfree`, returning
+empty extents to VMM. There is no user process, syscall layer, filesystem, keyboard
 driver, or disk driver beyond the BIOS loader. The timer uses the firmware's
 PIT configuration. Kernel section protection, guard pages, demand paging,
 and SMP synchronization are future work, not implied by the existing paging.
