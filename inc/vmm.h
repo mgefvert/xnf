@@ -1,3 +1,8 @@
+/*
+ * Kernel virtual-page allocation interface for normal execution context.
+ * Returns usable zeroed pointers while hiding the placement of physical backing frames.
+ */
+
 #ifndef XNF_VMM_H
 #define XNF_VMM_H
 

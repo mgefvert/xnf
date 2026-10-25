@@ -1,9 +1,16 @@
+; -----------------------------------------------------------------------------
+; Kernel entry: establish CPU/BIOS prerequisites and enter protected mode.
+; Collects E820, validates RAM before .bss, and hands control to freestanding C.
+; -----------------------------------------------------------------------------
+
 BITS 16
 section .text
 
 KERNEL_LOAD_ADDRESS equ 0x10000
 
 %define RM_OFFSET(label) (label - start)
+; Linked symbols are physical addresses. BIOS real-mode operands need offsets
+; within segment 0x1000, while flat protected-mode operands use physical values.
 %define KERNEL_ADDRESS(label) (KERNEL_LOAD_ADDRESS + label - start)
 
 NULL_SELECTOR        equ 0x00
@@ -42,7 +49,7 @@ start:
     pushfd
     pop ecx
     mov eax, ecx
-    xor eax, 1 << 21
+    xor eax, 1 << 21           ; Writable EFLAGS.ID means CPUID is available.
     push eax
     popfd
     pushfd
@@ -54,6 +61,8 @@ start:
     jz unsupported_cpu
     mov eax, 1
     cpuid
+    ; CPUID leaf 1 puts the base family in EAX bits 8..11. Families >= 6
+    ; satisfy this conservative i686 baseline, including extended-family CPUs.
     shr eax, 8
     and eax, 0xF
     cmp eax, 6
@@ -146,7 +155,7 @@ memory_detect:
     ; ES:DI points at the next 24-byte slot. Entry count is at most 31 here.
     mov ax, [RM_OFFSET(_e820_entry_count)]
     mov bx, E820_ENTRY_SIZE
-    mul bx
+    mul bx                     ; Slot byte offset = entry index * 24.
     add ax, RM_OFFSET(_e820_map)
     mov di, ax
     mov [RM_OFFSET(_e820_slot_offset)], di
@@ -157,6 +166,8 @@ memory_detect:
     mov eax, E820_FUNCTION
     mov edx, E820_SIGNATURE
     mov ecx, E820_ENTRY_SIZE
+    ; EBX is an opaque BIOS continuation token, not a memory address or index.
+    ; Start at zero, and stop when the BIOS returns zero again.
     mov ebx, [RM_OFFSET(_e820_continuation)]
 
     ; Keep the kernel data segments valid even if the BIOS changes DS or ES.
@@ -169,7 +180,7 @@ memory_detect:
     mov di, [RM_OFFSET(_e820_slot_offset)]
 
     jc .failure
-    cmp eax, E820_SIGNATURE
+    cmp eax, E820_SIGNATURE     ; EAX must return the ASCII "SMAP" signature.
     jne .failure
 
     ; BIOSes return either a 20-byte legacy entry or the requested 24 bytes.
@@ -224,6 +235,8 @@ gdt_start:
 gdt_null:
     dq 0                       ; Selector 0x00: mandatory null descriptor.
 gdt_code:
+    ; A selector is the descriptor's byte offset: code is 0x08, data is 0x10.
+    ; Limit 0xFFFFF with 4 KiB granularity covers a flat 4 GiB segment.
     dw 0xFFFF                  ; Limit bits 0..15.
     dw 0x0000                  ; Base bits 0..15.
     db 0x00                    ; Base bits 16..23.
@@ -266,6 +279,8 @@ protected_mode_entry:
     mov ecx, __bss_end
     sub ecx, edi
     xor eax, eax
+    ; NOLOAD reserves these bytes in RAM but puts none of them in kernel.bin.
+    ; Only .bss is cleared; the final stack is reserved but need not be zeroed.
     rep stosb
 
     call _interrupts_init

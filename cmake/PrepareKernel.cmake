@@ -1,3 +1,8 @@
+# -----------------------------------------------------------------------------
+# Pad the linked kernel to whole BIOS sectors and publish its sector count.
+# Enforces the boot loader limit before NASM assembles the dependent boot sector.
+# -----------------------------------------------------------------------------
+
 if(NOT DEFINED KERNEL_INPUT OR NOT DEFINED KERNEL_PADDED OR NOT DEFINED KERNEL_INCLUDE OR NOT DEFINED NASM_EXECUTABLE)
     message(FATAL_ERROR "PrepareKernel.cmake requires KERNEL_INPUT, KERNEL_PADDED, KERNEL_INCLUDE, and NASM_EXECUTABLE")
 endif()
@@ -7,6 +12,8 @@ if(KERNEL_SIZE LESS 1)
     message(FATAL_ERROR "kernel.bin is empty")
 endif()
 
+# Ceiling division includes a final partial sector. The BIOS one-request
+# limit is 127 sectors, which also stays inside the 64 KiB segment buffer.
 math(EXPR KERNEL_SECTORS "(${KERNEL_SIZE} + 511) / 512")
 if(KERNEL_SECTORS GREATER 127)
     message(FATAL_ERROR "kernel.bin is ${KERNEL_SIZE} bytes (${KERNEL_SECTORS} sectors); the one-request BIOS loader limit is 127 sectors")
@@ -16,6 +23,8 @@ math(EXPR PAD_BYTES "(${KERNEL_SECTORS} * 512) - ${KERNEL_SIZE}")
 if(PAD_BYTES GREATER 0)
     set(PADDING_ASM "${CMAKE_CURRENT_BINARY_DIR}/kernel_padding.asm")
     set(PADDING_BIN "${CMAKE_CURRENT_BINARY_DIR}/kernel_padding.bin")
+    # Ask NASM for zero bytes instead of depending on shell-specific binary
+    # output. Temporary files stay in the build directory and are removed below.
     file(WRITE "${PADDING_ASM}" "BITS 16\ntimes ${PAD_BYTES} db 0\n")
     execute_process(
         COMMAND "${NASM_EXECUTABLE}" -f bin -o "${PADDING_BIN}" "${PADDING_ASM}"

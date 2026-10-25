@@ -1,3 +1,8 @@
+/*
+ * Place the flat kernel at its BIOS load address and expose reservation bounds.
+ * Loaded sections, zeroed .bss, and the uninitialized stack have distinct lifetimes.
+ */
+
 SECTIONS
 {
     /* The BIOS loads the first kernel byte at physical 0x10000. */
@@ -6,6 +11,8 @@ SECTIONS
 
     .text :
     {
+        /* Kernel assembly is linked first so its real-mode entry is the first
+           byte the BIOS loads. These wildcards also collect GCC subsections. */
         *(.text)
         *(.text.*)
         *(.text$*)
@@ -29,6 +36,8 @@ SECTIONS
 
     .bss (NOLOAD) :
     {
+        /* NOLOAD gives globals RAM addresses without inflating the flat disk
+           image. Assembly uses these bounds to supply C's zero-init guarantee. */
         . = ALIGN(4);
         __bss_start = .;
         *(.bss)
@@ -54,6 +63,8 @@ SECTIONS
 
     /DISCARD/ :
     {
+        /* Runtime unwinding, build notes, and PE linker directives have no
+           consumer in this bare-metal image and must not leak into the disk. */
         *(.comment)
         *(.note*)
         *(.eh_frame*)

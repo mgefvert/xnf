@@ -1,3 +1,8 @@
+/*
+ * Turn BIOS E820 records into a conservative physical-region map.
+ * Provides pre-paging bootstrap reservations and retains them for PMM validation.
+ */
+
 #include "memory.h"
 #include "conio.h"
 #include "panic.h"
@@ -14,6 +19,9 @@ extern uint8_t kernel_start[] __asm__("__kernel_start");
 extern uint8_t kernel_end[] __asm__("__kernel_end");
 
 static MemblockRegion regions[MEMBLOCK_MAX_REGIONS];
+/* Each E820 interval contributes a start and end. Add zero and the end of
+   page zero so even an unreported low-memory hole can be represented safely.
+   Fixed arrays let us discover memory before any allocator exists. */
 static uint64_t boundaries[MEMBLOCK_MAX_BOUNDARIES];
 static uint32_t region_count;
 static uint32_t boundary_count;
@@ -36,6 +44,9 @@ static void validate_regions(void)
         kernel_panic("Memblock", "invalid first page or region count");
     }
 
+    /* Normalization makes a continuous partition from zero to the last known
+       endpoint. A firmware gap is an explicit UNAVAILABLE region, not a gap
+       in this array; equal adjacent types should already have been merged. */
     for (i = 0; i < region_count; ++i) {
         const MemblockRegion *region = &regions[i];
         if (region->length == 0 ||
@@ -60,6 +71,8 @@ static void append_region(uint64_t base, uint64_t end, MemblockType type)
         if (region_end(last) > base) {
             kernel_panic("Memblock", "overlapping regions");
         }
+        /* Coalescing reduces pressure on the fixed table and lets later
+           allocations span adjacent firmware records of the same type. */
         if (region_end(last) == base && last->type == type) {
             last->length += end - base;
             return;
@@ -78,6 +91,8 @@ static void sort_boundaries(void)
 {
     uint32_t i;
 
+    /* At most 66 endpoints: insertion sort is small, deterministic, and needs
+       no temporary allocation. Duplicate endpoints are harmless during import. */
     for (i = 1; i < boundary_count; ++i) {
         uint64_t value = boundaries[i];
         uint32_t j = i;
@@ -91,6 +106,9 @@ static void sort_boundaries(void)
 
 static MemblockType e820_type(uint32_t type, uint32_t *priority)
 {
+    /* Larger priorities win overlaps, independent of BIOS record order.
+       Unknown types are reserved rather than optimistically treated as RAM.
+       ACPI reclaimable memory stays unavailable until ACPI has been handled. */
     switch (type) {
     case 1:
         *priority = 1;
@@ -121,6 +139,8 @@ static void split_at(uint64_t address)
         if (region_count == MEMBLOCK_MAX_REGIONS) {
             kernel_panic("Memblock", "region table full");
         }
+        /* Move entries backward so their source slots are not overwritten.
+           The two resulting half-open ranges keep the old type until reserved. */
         for (j = region_count; j > i + 1; --j) {
             regions[j] = regions[j - 1];
         }
@@ -145,6 +165,7 @@ static void merge_regions(void)
             for (j = i; j + 1 < region_count; ++j) {
                 regions[j] = regions[j + 1];
             }
+            /* Recheck the same index: a third neighbor may also merge. */
             --region_count;
         } else {
             ++i;
@@ -162,6 +183,8 @@ static void reserve_available(uint64_t base, uint64_t end, MemblockType type)
                         type != MEMBLOCK_BOOT_ALLOCATED)) {
         kernel_panic("Memblock", "invalid reservation");
     }
+    /* Check the entire requested range before mutating any region. Otherwise
+       a reservation could partially succeed before encountering firmware-owned memory. */
     for (i = 0; i < region_count && covered < end; ++i) {
         uint64_t next = region_end(&regions[i]);
         if (next <= covered) {
@@ -176,6 +199,8 @@ static void reserve_available(uint64_t base, uint64_t end, MemblockType type)
         kernel_panic("Memblock", "reservation extends beyond known RAM");
     }
 
+    /* After splitting at both endpoints, only complete array entries need
+       changing; there is no byte rounding that could hide a partial frame. */
     split_at(base);
     split_at(end);
     for (i = 0; i < region_count; ++i) {
@@ -217,6 +242,8 @@ void memblock_init(void)
     }
     sort_boundaries();
 
+    /* Sweep consecutive sorted endpoints. No E820 record starts or ends
+       inside one such interval, so a single winning type describes it all. */
     for (i = 1; i < boundary_count; ++i) {
         uint64_t base = boundaries[i - 1];
         uint64_t end = boundaries[i];
@@ -224,6 +251,7 @@ void memblock_init(void)
         uint32_t best_priority = 0;
         MemblockType type = MEMBLOCK_UNAVAILABLE;
 
+        /* Repeated boundaries describe no bytes and must not create a region. */
         if (end == base) {
             continue;
         }
@@ -235,6 +263,7 @@ void memblock_init(void)
                 continue;
             }
             source_end = e820_map[j].base_address + e820_map[j].length;
+            /* Only records covering the whole interval compete for its type. */
             if (e820_map[j].base_address > base || source_end < end) {
                 continue;
             }
@@ -265,6 +294,8 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
     if (allocator_retired) {
         kernel_panic("Memblock", "bootstrap allocator retired; use PMM for physical pages");
     }
+    /* A nonzero power of two has exactly one bit set: x & (x - 1) is zero.
+       This restriction makes mask-based alignment well-defined below. */
     if (!initialized || size == 0 || alignment == 0 ||
         (alignment & (alignment - 1)) != 0) {
         kernel_panic("Memblock", "invalid allocation request or uninitialized map");
@@ -287,6 +318,9 @@ uint64_t memblock_alloc(uint64_t size, uint64_t alignment)
         if (base < FIRST_PAGE_END) {
             base = FIRST_PAGE_END;
         }
+        /* Rounding up adds alignment-1, then clears the low alignment bits.
+           For example, aligning 0x1234 to 0x1000 produces 0x2000. Check the
+           addition first, and use subtraction for the fit test to avoid wrap. */
         if (base > UINT64_MAX_VALUE - mask) {
             continue;
         }

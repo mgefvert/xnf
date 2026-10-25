@@ -1,4 +1,9 @@
-"""Shared QEMU/GDB infrastructure. Importing this module has no side effects."""
+"""Shared build discovery and QEMU control for host-side kernel tests.
+
+Discovers tool paths and linked symbols only when configure() is called.
+QMP controls execution and snapshots; GDB is used by callers for injected probes.
+Importing the module neither parses arguments nor starts processes.
+"""
 import argparse
 import json
 import os
@@ -22,6 +27,8 @@ class TestEnvironment:
 
 
 def configure(description, require_tests=True):
+    # Read the configured tool paths, not whichever GCC/QEMU happens to be on
+    # PATH today. Linked symbols also avoid assumptions about changing layouts.
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('--build', type=pathlib.Path, default=pathlib.Path('cmake-build-tests'))
     parser.add_argument('--gdb', type=pathlib.Path)
@@ -52,6 +59,9 @@ class Guest:
         self.environment = environment
         build, cache = environment.build, environment.cache
         self.name = name
+        # Start paused so GDB can install probes before any guest code runs.
+        # Disable reboot/shutdown to leave fatal state inspectable, and record
+        # interrupts/resets even though there is no visible emulator window.
         command = [cache['QEMU_EXECUTABLE'], '-m', str(ram), '-drive',
                    f'format=raw,file={build / "xnf.img"}', '-display', 'none',
                    '-serial', 'none', '-monitor', 'none', '-qmp', 'stdio', '-S',
@@ -64,6 +74,8 @@ class Guest:
         self.process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True, creationflags=HIDDEN)
         self.messages = queue.Queue()
+        # QMP emits asynchronous events as well as command responses. A reader
+        # thread drains stdout while the main test waits or runs a GDB client.
         def receive():
             for line in self.process.stdout:
                 self.messages.put(json.loads(line))
@@ -77,6 +89,7 @@ class Guest:
         while True:
             message = self.messages.get(timeout=10)
             assert 'error' not in message, message
+            # STOP/RESUME and other events are not replies to this command.
             if 'return' in message:
                 return message['return']
 
@@ -84,11 +97,14 @@ class Guest:
         return self.qmp('human-monitor-command', **{'command-line': command})
 
     def read(self, address, size, label):
+        # pmemsave reads physical RAM, bypassing guest translations. This lets
+        # tests inspect absent mappings, frame bitmaps, and VGA independently.
         path = self.environment.build / f'{self.name}-{label}.bin'
         assert not self.monitor(f'pmemsave {address:#x} {size:#x} "{path.as_posix()}"')
         return path.read_bytes()
 
     def value(self, symbol):
+        # The kernel stores native 32-bit x86 words in little-endian order.
         return struct.unpack('<I', self.read(self.environment.symbols[symbol], 4, symbol))[0]
 
     def close(self):

@@ -1,3 +1,8 @@
+/*
+ * VGA text console and small freestanding formatting helpers.
+ * Maintains screen cells and a software cursor, mirrored to the VGA hardware cursor.
+ */
+
 #include "types.h"
 #include "conio.h"
 
@@ -8,11 +13,15 @@
 #define CONIO_SCREEN_CELLS (CONIO_SCREEN_WIDTH * CONIO_SCREEN_HEIGHT)
 #define CONIO_VIDEO_MEMORY ((volatile uint16_t *)0x000B8000u)
 
+/* VGA cells are 16 bits: low byte = character, high byte = color attribute.
+   Volatile keeps stores observable by hardware even if C never reads them. */
 static uint8_t conio_color = 0x07;
 static uint16_t conio_cursor;
 
 static inline void outb(uint16_t port, uint8_t value)
 {
+    /* "a" selects AL; "Nd" permits an immediate port or DX. Port I/O uses
+       CPU instructions, unlike VGA cell writes through a memory address. */
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
 }
 
@@ -27,10 +36,13 @@ static void conio_sync_hw_cursor(void)
 {
     uint8_t value;
 
+    /* The CRTC uses an index/data pair: choose a register at 0x3D4, then
+       access it at 0x3D5. Clear cursor-disable bit 5 without changing shape. */
     outb(0x3D4, 0x0A);
     value = inb(0x3D5);
     outb(0x3D5, (uint8_t)(value & 0xDF));
 
+    /* The linear cell index is split into low/high bytes, not pixel units. */
     outb(0x3D4, 0x0F);
     outb(0x3D5, (uint8_t)conio_cursor);
     outb(0x3D4, 0x0E);
@@ -41,6 +53,8 @@ static void conio_scroll(void)
 {
     uint32_t index;
 
+    /* Copy toward lower addresses so overlapping rows are not overwritten
+       before they are read. Blank the last row, then keep the cursor there. */
     for (index = 0; index < CONIO_SCREEN_WIDTH * (CONIO_SCREEN_HEIGHT - 1); ++index) {
         CONIO_VIDEO_MEMORY[index] = CONIO_VIDEO_MEMORY[index + CONIO_SCREEN_WIDTH];
     }
@@ -66,6 +80,8 @@ void kputc(unsigned int character)
 {
     uint32_t cursor;
 
+    /* Newline advances to the next row's first cell; carriage return moves
+       within the current row. Backspace erases only when a previous cell exists. */
     if ((uint8_t)character == '\n') {
         cursor = conio_cursor;
         conio_cursor = (uint16_t)(((cursor / CONIO_SCREEN_WIDTH) + 1) * CONIO_SCREEN_WIDTH);
@@ -80,6 +96,7 @@ void kputc(unsigned int character)
             CONIO_VIDEO_MEMORY[conio_cursor] = (uint16_t)(' ' | ((uint16_t)conio_color << 8));
         }
     } else {
+        /* Shift the color into the high byte, leaving the character below it. */
         CONIO_VIDEO_MEMORY[conio_cursor] = (uint16_t)((uint8_t)character | ((uint16_t)conio_color << 8));
         ++conio_cursor;
         if (conio_cursor >= CONIO_SCREEN_CELLS) {
@@ -104,6 +121,8 @@ static void kprint_hex_digit(uint32_t digit)
 
 static void kprint_hex_dword(uint32_t value)
 {
+    /* One hexadecimal digit represents four bits. Extract nibbles from the
+       most significant down to the least, keeping leading zeros visible. */
     for (int shift = 28; shift >= 0; shift -= 4) {
         kprint_hex_digit((value >> shift) & 0x0F);
     }
@@ -118,6 +137,8 @@ void kprint_hex(uint32_t value)
 
 void kprint_hex64(unsigned long long value)
 {
+    /* Printing two 32-bit halves avoids needing 64-bit division helpers from
+       a compiler runtime which this freestanding kernel does not link. */
     kputc('0');
     kputc('x');
     kprint_hex_dword((uint32_t)(value >> 32));
@@ -129,6 +150,8 @@ void kprint_dec(uint32_t value)
     char digits[10];
     uint32_t count = 0;
 
+    /* Repeated division discovers decimal digits right to left. A do/while
+       still emits one digit for zero; reverse the buffer for normal order. */
     do {
         digits[count++] = (char)('0' + value % 10);
         value /= 10;
@@ -143,6 +166,8 @@ void kprintf(const char *format, ...)
 {
     va_list arguments;
 
+    /* The format string is the only type information for variadic arguments.
+       Callers must match each conversion, especially the 64-bit X extension. */
     va_start(arguments, format);
     while (*format != '\0') {
         uint8_t conversion;
@@ -168,6 +193,7 @@ void kprintf(const char *format, ...)
             kputs(va_arg(arguments, const char *));
             break;
         case 'c':
+            /* C promotes a char passed through ... to int. */
             kputc((unsigned int)va_arg(arguments, int));
             break;
         case 'd': {
@@ -175,6 +201,8 @@ void kprintf(const char *format, ...)
             uint32_t magnitude;
             if (value < 0) {
                 kputc('-');
+                /* Unsigned subtraction also handles INT_MIN; negating it as
+                   a signed int would overflow before printing its magnitude. */
                 magnitude = 0u - (uint32_t)value;
             } else {
                 magnitude = (uint32_t)value;
@@ -186,6 +214,7 @@ void kprintf(const char *format, ...)
             kprint_hex(va_arg(arguments, uint32_t));
             break;
         case 'X':
+            /* XNF's %X consumes 64 bits; it is not standard printf's %X. */
             kprint_hex64(va_arg(arguments, unsigned long long));
             break;
         default:
@@ -215,6 +244,8 @@ void ksetcursor(unsigned int column, unsigned int row)
     if (row >= CONIO_SCREEN_HEIGHT) {
         row = CONIO_SCREEN_HEIGHT - 1;
     }
+    /* Row-major layout: every preceding row contributes 80 cells. Clamp
+       before computing the index so later printing stays inside VGA memory. */
     conio_cursor = (uint16_t)(column + row * CONIO_SCREEN_WIDTH);
     conio_sync_hw_cursor();
 }

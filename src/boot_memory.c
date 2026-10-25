@@ -1,3 +1,8 @@
+/*
+ * Validate physical RAM before .bss and the final stack can be used.
+ * Runs on the loaded temporary stack; no normal kernel services are available.
+ */
+
 #include "e820.h"
 
 extern uint8_t kernel_start[] __asm__("__kernel_start");
@@ -35,12 +40,18 @@ void boot_memory_check(void)
         if ((entry->attributes & 1u) == 0 || entry->length == 0) {
             continue;
         }
+        /* Check addition by subtraction before forming an exclusive end.
+           Half-open intervals overlap iff each starts before the other ends. */
         if (entry->length > ~(uint64_t)0 - entry->base_address ||
             (entry->type != 1 && entry->base_address < end &&
              entry->base_address + entry->length > start)) {
             boot_memory_panic();
         }
     }
+    /* BIOS records need not be sorted or merged. Repeatedly extend the covered
+       prefix with any usable interval touching it; adjacent records are fine,
+       but failure to advance proves there is an uncovered hole. Reserved
+       overlaps were rejected above so usable records cannot conceal them. */
     while (covered < end) {
         uint64_t next = covered;
         for (i = 0; i < e820_entry_count; ++i) {

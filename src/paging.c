@@ -1,4 +1,9 @@
-﻿#include "paging.h"
+﻿/*
+ * Build and inspect non-PAE x86 page tables, then edit kernel mappings.
+ * Owns translation mechanics; VMM separately decides virtual and physical ownership.
+ */
+
+#include "paging.h"
 #include "memory.h"
 #include "conio.h"
 #include "panic.h"
@@ -6,6 +11,8 @@
 #include "irq.h"
 
 #define TABLE_ENTRIES 1024u
+/* A non-PAE address splits into directory[31:22], table[21:12], offset[11:0].
+   Each table has 1024 four-byte entries and covers 1024 * 4 KiB = 4 MiB. */
 #define TABLE_SPAN (PAGE_SIZE * TABLE_ENTRIES)
 #define KERNEL_TABLES (KERNEL_VIRTUAL_END / TABLE_SPAN)
 #define PAGE_PRESENT 0x001u
@@ -67,6 +74,8 @@ static void verify_tables(const uint32_t *directory)
     uint32_t i;
     uint32_t j;
 
+    /* This exact comparison is safe before activation only. Once the CPU
+       walks these tables it may set accessed/dirty bits without asking C. */
     for (i = 0; i < TABLE_ENTRIES; ++i) {
         uint32_t entry = directory[i];
         if (i >= KERNEL_TABLES) {
@@ -79,6 +88,8 @@ static void verify_tables(const uint32_t *directory)
             kernel_panic("Paging", "invalid directory flags");
         }
         {
+            /* A page-aligned physical base occupies the upper 20 bits;
+               clearing the low 12 flag bits recovers its identity pointer. */
             const uint32_t *table = (const uint32_t *)(entry & ~(PAGE_SIZE - 1u));
             for (j = 0; j < TABLE_ENTRIES; ++j) {
                 uint32_t address = i * TABLE_SPAN + j * PAGE_SIZE;
@@ -105,6 +116,8 @@ void paging_prepare(void)
     paging_directory_physical = (uint32_t)directory;
 
     /* All paging structures are reserved in .bss before preparation begins. */
+    /* Round upward to a whole table span. The cast keeps the complement
+       64-bit, preserving a possible exclusive physical end at 4 GiB. */
     end = (required_end() + TABLE_SPAN - 1u) & ~((uint64_t)TABLE_SPAN - 1u);
     if (end >= KERNEL_VIRTUAL_END) {
         kernel_panic("Paging", "bootstrap mappings leave no kernel virtual arena");
@@ -117,6 +130,8 @@ void paging_prepare(void)
             kernel_tables[i][j] = address != 0 && address < paging_identity_end
                 ? address | PAGE_FLAGS : 0;
         }
+        /* Tables exist even for currently unused virtual ranges. Their PTEs
+           remain zero until VMM supplies backing; no USER bit is ever set. */
         directory[i] = (uint32_t)kernel_tables[i] | PAGE_FLAGS;
     }
 
@@ -163,8 +178,12 @@ bool paging_query(uint32_t virtual_address, PagingMapping *mapping)
     bool found = false;
     if (enabled && mapping != 0 && virtual_address < KERNEL_VIRTUAL_END) {
         const uint32_t *directory = (const uint32_t *)paging_directory_physical;
+        /* Discard the offset/table bits for the PDE index; shifting by 12
+           and masking ten bits gives the PTE index within that table. */
         uint32_t pde = directory[virtual_address >> 22];
         uint32_t pte = kernel_tables[virtual_address >> 22][(virtual_address >> 12) & 1023u];
+        /* 0x81 tests PRESENT (bit 0) and PS (bit 7): require a present 4 KiB
+           table, not a 4 MiB large page. Both levels must permit a write. */
         if ((pde & 0x81u) == PAGE_PRESENT && (pte & PAGE_PRESENT) != 0) {
             mapping->physical_address = (pte & 0xFFFFF000u) | (virtual_address & 4095u);
             mapping->flags = (pde & pte) & PAGING_WRITABLE;
@@ -179,6 +198,8 @@ bool paging_query(uint32_t virtual_address, PagingMapping *mapping)
    VMM owns allocation transactions in non-preemptive normal context. */
 static uint32_t *dynamic_entry(uint32_t address)
 {
+    /* Centralize the boundary checks so no runtime operation can unmap its
+       own code/stack/tables or consume the future user virtual range. */
     if (!enabled || address < paging_identity_end || address >= KERNEL_VIRTUAL_END ||
         (address & (PAGE_SIZE - 1u)) != 0) {
         return 0;
@@ -188,6 +209,9 @@ static uint32_t *dynamic_entry(uint32_t address)
 
 static void invalidate(uint32_t address)
 {
+    /* Editing RAM does not evict a cached CPU translation. INVLPG makes this
+       virtual page use the new entry; the clobber orders compiler memory use.
+       This affects the current CPU only; SMP would require remote shootdowns. */
     __asm__ volatile ("invlpg (%0)" : : "r" (address) : "memory");
 }
 
@@ -196,6 +220,9 @@ bool paging_map(uint32_t virtual_address, uint32_t physical_address, uint32_t fl
     uint32_t saved = irq_save();
     uint32_t *entry = dynamic_entry(virtual_address);
     bool result = false;
+    /* Requiring an empty slot prevents replacement from silently orphaning
+       someone else's frame. OR flags into the aligned base; they occupy the
+       low bits which the address itself must leave clear. */
     if (entry != 0 && *entry == 0 && physical_address != 0 &&
         (physical_address & (PAGE_SIZE - 1u)) == 0 && (flags & ~PAGING_WRITABLE) == 0) {
         *entry = physical_address | PAGE_PRESENT | flags;
@@ -212,6 +239,7 @@ bool paging_unmap(uint32_t virtual_address)
     uint32_t *entry = dynamic_entry(virtual_address);
     bool result = false;
     if (entry != 0 && (*entry & PAGE_PRESENT) != 0) {
+        /* Revoke access before the owner can return this frame to PMM. */
         *entry = 0;
         invalidate(virtual_address);
         result = true;

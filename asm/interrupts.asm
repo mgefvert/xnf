@@ -1,3 +1,8 @@
+; -----------------------------------------------------------------------------
+; Hardware entry/exit for CPU exceptions and the timer IRQ.
+; Builds the IDT, remaps the PIC, normalizes exception frames, and preserves registers.
+; -----------------------------------------------------------------------------
+
 ; First protected-mode exception path. These handlers run in ring 0 with the
 ; flat kernel segments already loaded by protected_mode_entry.
 
@@ -21,6 +26,8 @@ section .text
 
 ; Exceptions without a processor-pushed error code get a synthetic zero.
 %macro ISR_NO_ERROR 1
+; All exceptions must present the same vector/error layout to C. A synthetic
+; zero fills the CPU's missing error-code slot; it is removed before IRETD.
 isr%1:
     push dword 0
     push dword %1
@@ -75,6 +82,8 @@ irq0_stub:
 
     ; Align the stack for the existing 32-bit C ABI before calling the handler.
     mov ebp, esp
+    ; Clear the low four bits to round down to a 16-byte C call-site boundary.
+    ; EBP remembers the untouched frame so alignment padding is reversible.
     and esp, 0xFFFFFFF0
     call _timer_handler
     mov esp, ebp
@@ -85,7 +94,7 @@ irq0_stub:
     out PIC_MASTER_COMMAND, al
 
     popad
-    iretd
+    iretd                      ; Restores EIP, CS, and the interrupted EFLAGS/IF.
 
 ; At entry the normalized stack is vector, error code, EIP, CS, EFLAGS.
 ; PUSHAD makes the structure passed to C begin with EDI, ESI, EBP, saved ESP,
@@ -125,6 +134,8 @@ _interrupts_init:
     mov ecx, EXCEPTION_COUNT
 .install_exception_gate:
     lodsd
+    ; Each IDT gate splits a 32-bit entry address into two 16-bit halves.
+    ; The selector chooses the flat code segment, not the handler address.
     mov [edi], ax              ; Handler offset bits 0..15.
     mov word [edi + 2], KERNEL_CODE_SELECTOR
     mov byte [edi + 4], 0      ; Reserved byte.
@@ -189,6 +200,7 @@ _interrupts_init:
 
 ; Common legacy delay between PIC command/data writes (port 0x80 is unused).
 pic_io_wait:
+    ; A harmless legacy port write gives the PIC time to process commands.
     out 0x80, al
     ret
 

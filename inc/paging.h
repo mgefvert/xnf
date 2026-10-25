@@ -1,4 +1,9 @@
-﻿#ifndef XNF_PAGING_H
+﻿/*
+ * Paging startup and read-only translation queries for kernel clients.
+ * Mapping mutations are kept in paging_internal.h so allocation ownership stays in VMM.
+ */
+
+#ifndef XNF_PAGING_H
 #define XNF_PAGING_H
 
 #include <stdbool.h>
@@ -18,7 +23,10 @@ extern uint32_t paging_directory_physical;
 extern uint32_t paging_identity_end;
 
 void paging_prepare(void);
+/* Must follow preparation immediately; activation must allocate/write no tables. */
 void paging_enable(void);
+/* On success, return the physical byte address and RW permission allowed by
+   both paging levels. On failure, leave the caller's output object unchanged. */
 bool paging_query(uint32_t virtual_address, PagingMapping *mapping);
 
 #endif

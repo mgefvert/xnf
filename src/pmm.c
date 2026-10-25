@@ -1,3 +1,8 @@
+/*
+ * Physical memory manager: own and lend individual 4 KiB RAM frames.
+ * A bitmap covers addresses below 4 GiB; allocation never creates a mapping.
+ */
+
 #include "pmm.h"
 #include "memory.h"
 #include "conio.h"
@@ -46,6 +51,8 @@ void pmm_init(void)
     if (initialized) {
         kernel_panic("PMM", "already initialized");
     }
+    /* Start with everything unavailable, including holes and absent RAM.
+       Only complete, proven available frames will have their bits cleared. */
     for (i = 0; i < BITMAP_WORDS; ++i) {
         bitmap[i] = 0xFFFFFFFFu;
     }
@@ -65,12 +72,17 @@ void pmm_init(void)
         if (end > PHYSICAL_END) {
             end = PHYSICAL_END;
         }
+        /* Round the start upward and exclusive end downward: a frame that
+           partly overlaps a reservation must never enter the free pool.
+           Keep the arithmetic 64-bit so the end at exactly 4 GiB survives. */
         first = (uint32_t)((region->base + PAGE_SIZE - 1u) / PAGE_SIZE);
         last = (uint32_t)(end / PAGE_SIZE);
         if (first == 0) {
             first = 1;
         }
         for (frame = first; frame < last; ++frame) {
+            /* Division selects a 32-bit bitmap word; remainder selects its
+               bit. Clearing that bit changes this full frame to free. */
             bitmap[frame / WORD_BITS] &= ~(1u << (frame % WORD_BITS));
             ++managed_pages;
         }
@@ -95,10 +107,15 @@ static uint32_t allocate_frame(void)
 
     while (remaining-- != 0) {
         if (bitmap[word] != 0xFFFFFFFFu) {
+            /* Inverting turns free zero bits into ones. Counting trailing
+               zeros finds the first such bit; the full-word check ensures
+               the input is nonzero, as required by __builtin_ctz. */
             uint32_t bit = (uint32_t)__builtin_ctz(~bitmap[word]);
             bitmap[word] |= 1u << bit;
             --free_pages;
             next_word = word;
+            /* Convert word/bit back to a frame index, then to a byte address.
+               Even the final frame (0xFFFFF000) fits a 32-bit return value. */
             return (word * WORD_BITS + bit) * PAGE_SIZE;
         }
         if (++word == BITMAP_WORDS) {
@@ -127,6 +144,9 @@ bool pmm_free_page(uint32_t physical_address)
     uint32_t mask = 1u << (frame % WORD_BITS);
     bool success = false;
 
+    /* A set bit alone cannot distinguish an allocation from a reservation.
+       Consult the permanent memblock map before clearing it. A free bit
+       rejects a double free; alignment rejects pointers into a frame. */
     if (initialized && physical_address != 0 &&
         (physical_address & (PAGE_SIZE - 1u)) == 0 &&
         frame_is_managed(physical_address) &&

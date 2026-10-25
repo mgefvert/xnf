@@ -1,23 +1,33 @@
 # Kernel memory in XNF
 
+Memory management has three ownership layers:
+
+| Layer | Responsibility | Result |
+| --- | --- | --- |
+| Memblock (`src/memory.c`) | Normalize firmware ranges and reserve bootstrap memory | Physical byte ranges |
+| PMM (`src/pmm.c`) | Allocate/free individual available frames | Physical addresses |
+| VMM (`src/vmm.c`) | Own virtual ranges and map PMM frames into them | Usable kernel pointers |
+
+`src/paging.c` supplies translation mechanics to VMM, without owning frames.
+The kernel has no byte-granularity heap yet. Start with the
+[overview](KERNEL_OVERVIEW.md); build/test commands are in
+[KERNEL_BUILD.md](KERNEL_BUILD.md).
+
+## Bootstrap region storage
+
 XNF uses a small memblock table during boot, before it has a page allocator or
 heap. The table stores sorted, non-overlapping, half-open physical ranges
 `[base, base + length)` with 64-bit addresses. It lives in a fixed 128-entry
 `.bss` array; E820 normalization uses a second fixed array of 66 boundary
 addresses. No allocation is needed to manage either array.
 
-## Before clearing .bss
+## Early safety check
 
-XNF requires an i686 CPU (Pentium Pro or later). Real-mode assembly checks
-CPUID availability and CPU family before C runs, matching `-march=i686`.
-The initial real-mode stack and first protected-mode C stack share a 2 KiB
-buffer inside the BIOS-loaded image. `boot_memory_check()` reads E820 on
-that temporary stack, without using `.bss`, the final stack, the normal
-console, or allocators. It rejects overflow and requires complete usable
-coverage of the linker-defined kernel extent, with every enabled reserved
-overlap taking precedence. Failure writes directly to VGA and halts with
-IRQs disabled, leaving `.bss` and the final stack untouched. Success permits
-switching to the final 16 KiB stack and clearing `.bss`.
+Before `.bss` is cleared or the final stack is used, `boot_memory_check()`
+requires the whole kernel extent to be usable RAM. Enabled non-available
+E820 overlaps and coverage holes reject boot. It uses the temporary loaded
+stack, not allocator state. See [boot and CPU setup](KERNEL_BOOT.md) for the
+entry sequence and early failure path.
 
 ## Building the map
 
@@ -96,8 +106,8 @@ The 128 KiB PMM bitmap is part of the kernel's reserved `.bss`.
 `pmm_alloc_page()` uses one circular bitmap search and one word hint. There
 is no low/high physical split or promised allocation order, and no relation
 to the kernel/user virtual boundary. It neither maps nor clears memory.
-A physical address is not a kernel
-pointer, even when it is below 256 MiB. Zero indicates allocation failure.
+A physical address is not a kernel pointer, even when it is below 256 MiB.
+Zero indicates allocation failure.
 Only the owner may return an allocated frame through `pmm_free_page()`.
 
 ## Kernel virtual address space
@@ -127,9 +137,8 @@ and stay accessible through the permanent identity map. The linker rejects
 an extent reaching beyond the start of the VGA aperture at `0xA0000`;
 the early check and memblock additionally require the complete extent to be
 E820-available RAM, so an earlier firmware reservation stops initialization
-before `.bss` is touched. `.bss` does not add
-bytes to the BIOS-loaded image. Executable/data growth is still subject to
-the existing 127-sector loader limit.
+before `.bss` is touched. `.bss` does not add bytes to the BIOS-loaded image.
+Executable/data growth is still subject to the existing 127-sector loader limit.
 
 Activation sets CR0.PG and CR0.WP, loads CR3, and clears CR4.PAE/PSE. WP makes
 supervisor writes honor read-only page permissions. The i686 baseline provides
@@ -144,9 +153,8 @@ activation. Accessed/dirty bits do not affect the returned permissions.
 map, unmap, and protect require ownership of the virtual slot in normal,
 non-preemptive context. Each masks IRQs only for the individual PTE edit and
 TLB invalidation, then restores IF. They reject permanent-prefix changes,
-unaligned/out-of-range addresses,
-unsupported flags, and invalid mapping state. Physical page zero cannot be
-mapped. Flags are zero for read-only or `PAGING_WRITABLE`. These operations
+unaligned/out-of-range addresses, unsupported flags, and invalid mapping
+state. Physical page zero cannot be mapped. Flags are zero for read-only or `PAGING_WRITABLE`. These operations
 invalidate the affected TLB entry and never allocate/free physical frames.
 They must not be used to bypass VMM ownership or modify live VMM allocations.
 
@@ -181,59 +189,55 @@ on one CPU, no preemptive scheduler, and no IRQ/exception handler entering
 the VMM. Reserved runs are private until fully initialized. Timer delivery
 can continue during large allocations when the caller has enabled IRQs.
 Add synchronization before introducing preemption or SMP. There are no SMP
-locks or TLB shootdowns. The caller must stop using memory
-before freeing it and must not separately free its backing frames through
-PMM. As with ordinary pointer allocators, a stale pointer cannot be detected
+locks or TLB shootdowns. The caller must stop using memory before freeing it
+and must not separately free its backing frames through PMM. As with ordinary pointer allocators, a stale pointer cannot be detected
 after its address has been reused for a new allocation.
 
 There is no `kmalloc`/`kfree` heap yet. Kernel section protection, stack guards,
 demand paging, process address spaces, and swapping remain future work.
 
-## Validation
+## Reading the bit operations
 
-Normal builds exclude self-tests and deliberate fault probes. Configure a
-separate test build with the normal build's compiler/generator, then run:
+The PMM has one bit for each physical frame. For frame number `f`, `f / 32`
+selects its bitmap word and `f % 32` selects the bit inside that word. A set
+bit means unavailable, either permanently reserved or currently allocated.
+`~word` turns free bits into ones; counting its trailing zeros identifies a
+free frame. This operation is used only when `~word` is nonzero.
 
-```text
-cmake -S . -B cmake-build-tests -DXNF_BUILD_TESTS=ON
-cmake --build cmake-build-tests
-python tests/boot_qemu.py --build cmake-build-debug
-python tests/boot_qemu.py --build cmake-build-tests
-python tests/pmm_qemu.py --build cmake-build-tests
-python tests/vmm_qemu.py --build cmake-build-tests
+A non-PAE virtual address has three fields:
+
+| Bits | Meaning | C expression |
+| --- | --- | --- |
+| 31..22 | Directory index (10 bits) | `address >> 22` |
+| 21..12 | Table index (10 bits) | `(address >> 12) & 1023` |
+| 11..0 | Offset within a 4 KiB page | `address & 4095` |
+
+A PTE stores a page-aligned physical base in bits 31..12 and flags below it.
+Bit 0 is present; bit 1 permits writes; bit 2 permits user access and stays
+clear in XNF. Effective write permission requires RW at both levels.
+Masking with `0xFFFFF000` recovers the physical base. OR the original offset
+back in to translate a byte address. For example, virtual `0x0040307B` uses
+PDE 1, PTE 3, and offset `0x7B`; a PTE backed by frame `0x10002000` translates
+to physical `0x1000207B`.
+
+The CPU may cache translations in its TLB. PTE writes alone do not revoke
+cached access: every runtime edit invalidates that virtual page with
+`INVLPG`. Hardware accessed/dirty bits also explain why post-activation
+checks mask those bits instead of comparing entries byte-for-byte.
+
+## Allocating from C
+
+```c
+void *buffer = vmm_alloc_pages(3); /* 12 KiB of zeroed virtual memory. */
+if (buffer != 0) {
+    /* Use buffer as ordinary memory; its physical frames may be scattered. */
+    vmm_free_pages(buffer);       /* Free the entire run using its original base. */
+}
 ```
 
-Shared infrastructure lives in `tests/qemu_test.py`, with no argument parsing
-or process execution at import. C test sources live in `tests/kernel/` and
-are included only with `XNF_BUILD_TESTS=ON`; their declarations live in
-`inc/kernel_test.h`, outside the public allocator interfaces.
-
-The boot suite requires GDB. It checks ordinary 128/512 MiB boots, rejection
-of 486/Pentium CPUs, the real legacy-response normalization branch, and
-disabled reservations. Rejected reserved `.bss`/stack, gapped, disabled-RAM,
-and overflowing layouts must leave sentinel bytes throughout `.bss` and the
-final stack unchanged and remain halted without exceptions or resets.
-
-The PMM suite checks every physical bitmap bit against an independent E820
-model, 128/512 MiB boots, timers, faults/resets, overlapping/disjoint/partial
-regions, disabled entries, the top frame below 4 GiB, and bootstrap retirement.
-The top-frame fixture has exactly three allocatable frames, compared as a
-set; tests do not depend on allocation order. PMM tests never dereference
-frames. Synthetic E820
-and retirement cases require GDB; use `--gdb PATH` if discovery fails.
-
-The VMM suite requires GDB. It redirects disposable, normally booted guests
-to explicit test entry points, so ordinary startup does not run exhaustive
-tests. Real 128/512 MiB guests cover zeroing, data independence, page/table
-boundaries, virtual reuse, noncontiguous physical frames, high physical RAM,
-borrowed mappings, TLB remapping, permissions, invalid operations, physical
-exhaustion with partial rollback, virtual exhaustion/fragmentation, and IF
-preservation. A separate fixture exposes only high allocatable frames in real
-512 MiB RAM, with a reserved hole guaranteeing noncontiguous backing. The
-ordinary 512 MiB guest checks timer delivery during a large allocation.
-Host checks compare the full PMM and VMM bitmaps before/after,
-verify every kernel PTE and all future-user PDEs, and confirm timer progress.
-Four further guests verify exact fault addresses/error codes and halted IRQ
-state for null, freed, read-only-write, and user-boundary accesses. Logs and
-snapshots stay in the build directory. VMM write fixtures describe only RAM
-actually backed by the emulator; PMM-only fixtures may describe synthetic RAM.
+Call only after `vmm_init()` in normal non-preemptive execution context.
+A frame number from `pmm_alloc_page()` must be mapped before it is used as
+memory; use VMM for ordinary kernel allocations. Do not separately free a
+VMM allocation's physical frames or modify its mappings through the internal
+paging interface. See [validation coverage](KERNEL_BUILD.md#validation) for
+exhaustion, rollback, permission, and ownership checks.

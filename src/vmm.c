@@ -1,3 +1,8 @@
+/*
+ * Allocate contiguous kernel virtual ranges backed by independent PMM frames.
+ * Tracks allocation boundaries, publishes zeroed memory, and rolls back failures.
+ */
+
 #include "vmm.h"
 #include "paging_internal.h"
 #include "pmm.h"
@@ -18,6 +23,8 @@ static bool initialized;
 
 static bool bit(const uint32_t *map, uint32_t page)
 {
+    /* One word describes 32 virtual pages; shift a single bit to select the
+       page within that word. These indices describe virtual slots, not RAM. */
     return (map[page / 32u] & (1u << (page % 32u))) != 0;
 }
 
@@ -41,6 +48,8 @@ void vmm_init(void)
         mapping.physical_address != (uint32_t)&occupied[0]) {
         kernel_panic("VMM", "invalid initialization order or bootstrap map");
     }
+    /* Exclude the entire bootstrap prefix, including any identity-mapped
+       holes. A present mapping is not proof that a physical frame is free. */
     first_page = paging_identity_end / PAGE_SIZE;
     for (page = 0; page < PAGE_COUNT; ++page) {
         if (page >= first_page && paging_query(page * PAGE_SIZE, &mapping)) {
@@ -76,6 +85,8 @@ void *vmm_alloc_pages(uint32_t page_count)
     if (!initialized || page_count == 0 || page_count > free_virtual_pages) {
         return 0;
     }
+    /* First fit counts adjacent free slots, resetting at occupied pages.
+       The total free count alone cannot prove a contiguous run exists. */
     for (page = first_page; page < PAGE_COUNT; ++page) {
         run = bit(occupied, page) ? 0 : run + 1u;
         if (run == page_count) {
@@ -93,6 +104,8 @@ void *vmm_alloc_pages(uint32_t page_count)
         mark(occupied, start + page, true);
     }
     while (mapped < page_count) {
+        /* Only virtual addresses must be adjacent. Each physical loan is
+           independent and can come from anywhere below the 4 GiB limit. */
         uint32_t physical = pmm_alloc_page();
         uint32_t address = (start + mapped) * PAGE_SIZE;
         volatile uint32_t *destination;
@@ -108,11 +121,16 @@ void *vmm_alloc_pages(uint32_t page_count)
             kernel_panic("VMM", "mapping collided with virtual ownership");
         }
         ++mapped;
+        /* Clear through the new virtual mapping, never through the physical
+           integer. Otherwise high or otherwise unmapped RAM would fault. */
         destination = (volatile uint32_t *)address;
         for (word = 0; word < PAGE_SIZE / sizeof(uint32_t); ++word) {
             destination[word] = 0;
         }
     }
+    /* No allocation boundary has been published yet. On exhaustion, release
+       only successfully mapped frames, then clear every reserved virtual bit.
+       Counts remain unchanged, so failure is invisible to future callers. */
     if (mapped != page_count) {
         while (mapped != 0) {
             release_page(start + --mapped);
@@ -122,6 +140,9 @@ void *vmm_alloc_pages(uint32_t page_count)
         }
         return 0;
     }
+    /* Separate head/tail markers distinguish adjacent allocations without
+       storing a byte count in caller-accessible memory. Publish only after
+       every page is mapped and zeroed. */
     mark(heads, start, true);
     mark(tails, start + page_count - 1u, true);
     free_virtual_pages -= page_count;
@@ -135,6 +156,8 @@ bool vmm_free_pages(void *base)
     uint32_t end;
     uint32_t page;
 
+    /* Check range/alignment before indexing metadata. A head marker requires
+       the original base, so an interior page cannot release its neighbors. */
     if (!initialized || address < paging_identity_end || address >= KERNEL_VIRTUAL_END ||
         (address & (PAGE_SIZE - 1u)) != 0 || !bit(heads, start)) {
         return false;

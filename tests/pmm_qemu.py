@@ -22,6 +22,7 @@ def expected_bitmap(entries, occupied):
     entries = [entry for entry in entries if entry[3] & 1]
     free = set()
     limit = 1 << 32
+    # Round available ranges inward: only complete pages can be allocated.
     for base, length, kind, attributes in entries:
         if kind == 1:
             first = (min(base, limit) + 4095) // 4096
@@ -29,10 +30,13 @@ def expected_bitmap(entries, occupied):
             free.update(range(first, last))
     exclusions = [(base, base + length) for base, length, kind, _ in entries if kind != 1]
     exclusions += occupied + [(0, 4096)]
+    # Round exclusions outward: even a one-byte reservation blocks its frame.
     for base, end in exclusions:
         free.difference_update(range(min(base, limit) // 4096,
                                      (min(end, limit) + 4095) // 4096))
     bitmap = bytearray(b'\xff' * (128 * 1024))
+    # Host bytes have eight frame bits each, whereas the guest uses 32-bit
+    # words. Comparing serialized bits checks the same ownership independently.
     for frame in free:
         bitmap[frame // 8] &= ~(1 << (frame % 8))
     return bitmap, len(free)
@@ -91,6 +95,8 @@ def run_case(name, ram, fixture=None, retirement_probe=False):
                 occupied.append((table, table + 4096))
         # Current startup has no other memblock_alloc call sites.
         expected, managed = expected_bitmap(entries, occupied)
+        # Startup's ownership tests must return every loan. Matching all bits,
+        # not only counters, detects freeing a wrong but equally sized set.
         actual = guest.read(symbols['_bitmap'], 128 * 1024, 'bitmap')
         assert actual == expected, f'{name}: bitmap differs from independent E820 model'
         assert guest.value('_managed_pages') == guest.value('_free_pages') == managed

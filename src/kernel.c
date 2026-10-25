@@ -1,3 +1,8 @@
+/*
+ * Kernel initialization and the timer-driven idle loop.
+ * Orders memory-manager handovers and keeps console work outside IRQ handlers.
+ */
+
 #include "types.h"
 #include "conio.h"
 #include "memory.h"
@@ -10,12 +15,16 @@
 
 #define TIMER_DISPLAY_INTERVAL 18u
 
+/* IRQ0 changes this asynchronously. Volatile forces the idle loop to reload
+   it; an aligned 32-bit read is atomic on the current single CPU. */
 volatile uint32_t timer_ticks;
 
 extern void interrupts_enable_and_halt(void);
 
 void timer_handler(void)
 {
+    /* Do no printing or allocation here: the IRQ may interrupt those services
+       while their normal-context state is only partly updated. */
     ++timer_ticks;
 }
 
@@ -28,6 +37,9 @@ void kernel_main(void)
     memblock_init();
     memblock_dump();
 
+    /* Build translations while direct physical access is still possible,
+       activate them, then transfer physical ownership from memblock to PMM.
+       VMM depends on both working translations and the retired bootstrap pool. */
     paging_prepare();
     paging_enable();
     pmm_init();
@@ -41,6 +53,8 @@ void kernel_main(void)
     for (;;) {
         uint32_t ticks = timer_ticks;
 
+        /* Unsigned subtraction handles a wrapping tick counter. This is
+           approximate elapsed time: XNF has not programmed the firmware PIT. */
         if ((uint32_t)(ticks - last_displayed_ticks) >= TIMER_DISPLAY_INTERVAL) {
             last_displayed_ticks = ticks;
             kputc('.');

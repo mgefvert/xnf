@@ -26,6 +26,9 @@ def run_case(name, ram=128, cpu=None, fixture=None, reject=False, legacy=False):
             lines = ['set pagination off', 'set confirm off', 'set architecture i386',
                      f'target remote 127.0.0.1:{port}']
             if legacy:
+                # Stop after a valid BIOS reply but before its size branch.
+                # Force a legacy response so the real assembly normalization
+                # runs, rather than merely injecting already-normalized data.
                 lines += [f'hbreak *{symbols["memory_detect.response_size"]:#x}',
                           'continue', 'delete breakpoints', 'set $ecx = 20',
                           f'set {{unsigned int}}{symbols["_e820_map"] + 20:#x} = 0']

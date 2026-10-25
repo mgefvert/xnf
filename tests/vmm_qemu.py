@@ -24,6 +24,8 @@ def screen(guest, label):
 
 
 def redirect(guest, port, function):
+    # These C entries never return to the interrupted idle frame. A fresh,
+    # correctly aligned stack with a dummy return slot models cdecl entry.
     commands = build / f'{guest.name}-gdb.txt'
     commands.write_text('\n'.join([
         'set pagination off', 'set confirm off', 'set architecture i386',
@@ -43,8 +45,11 @@ def check_tables(guest):
     directory_address = guest.value('_paging_directory_physical')
     identity_end = guest.value('_paging_identity_end')
     directory = struct.unpack('<1024I', guest.read(directory_address, 4096, 'pd'))
+    # Only the first 64 PDEs belong to the 256 MiB kernel range. A present PDE
+    # is allowed there even when all PTEs under it are still absent.
     assert directory[64:] == (0,) * 960, 'future user range has present directories'
     for index, pde in enumerate(directory[:64]):
+        # 3 = PRESENT|RW; 0x23 additionally permits the CPU's accessed bit.
         assert pde & 0xfff in (3, 0x23), f'bad PDE flags {pde:#x}'
         table = pde & ~4095
         assert symbols['__kernel_start'] <= table < symbols['__kernel_end']
@@ -54,6 +59,8 @@ def check_tables(guest):
             if virtual == 0 or virtual >= identity_end:
                 assert entry == 0, f'leaked mapping {virtual:#x}: {entry:#x}'
             else:
+                # Accessed/dirty (bits 5/6) may change after the CPU uses a page.
+                # Address and permissions must still match the original map.
                 assert entry & ~0x60 == virtual | 3, f'changed identity mapping {virtual:#x}'
 
 
@@ -67,6 +74,9 @@ def run_case(ram, function='_vmm_test_entry', fault=None, high_fixture=False):
     guest = Guest(name, ram, port)
     try:
         if high_fixture:
+            # Low RAM contains only the kernel reservation in this firmware
+            # map. Every allocatable frame lies in real high guest RAM; a hole
+            # forces noncontiguous backing regardless of PMM search order.
             entries = [(symbols['__kernel_start'], symbols['__kernel_end'] - symbols['__kernel_start'], 1, 1),
                        (0x10000000, 0x1000000, 1, 1), (0x10001000, 4096, 2, 1)]
             data = build / f'{name}-e820.bin'
@@ -154,6 +164,8 @@ def run_case(ram, function='_vmm_test_entry', fault=None, high_fixture=False):
         log = (build / f'{name}-qemu.log').read_text()
         assert 'Triple fault' not in log and log.count('CPU Reset') == 2
         exceptions = re.findall(r'v=([0-9a-f]{2}) e=([0-9a-f]+)', log, re.I)
+        # IRQ vectors are expected. Among CPU exceptions require exactly the
+        # deliberate page fault, with PRESENT/WRITE error bits checked as well.
         faults = [(int(vector, 16), int(error, 16)) for vector, error in exceptions
                   if int(vector, 16) < 32]
         assert faults == ([(14, 3 if fault == 'readonly' else 2)] if fault else []), faults

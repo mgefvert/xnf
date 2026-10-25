@@ -1,3 +1,8 @@
+/*
+ * Internal page-table editing interface used by VMM and its tests.
+ * Changing a translation does not allocate or release the physical frame behind it.
+ */
+
 #ifndef XNF_PAGING_INTERNAL_H
 #define XNF_PAGING_INTERNAL_H
 

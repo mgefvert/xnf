@@ -1,3 +1,8 @@
+# -----------------------------------------------------------------------------
+# Assemble the raw bootable image from a boot sector and padded kernel.
+# Size checks keep BIOS sector addressing consistent with the bytes written to disk.
+# -----------------------------------------------------------------------------
+
 if(NOT DEFINED BOOT_BIN OR NOT DEFINED KERNEL_PADDED OR NOT DEFINED DISK_IMAGE)
     message(FATAL_ERROR "CreateDiskImage.cmake requires BOOT_BIN, KERNEL_PADDED, and DISK_IMAGE")
 endif()
@@ -13,6 +18,8 @@ if(NOT KERNEL_REMAINDER EQUAL 0)
     message(FATAL_ERROR "Padded kernel size must be a multiple of 512 bytes; got ${KERNEL_PADDED_SIZE}")
 endif()
 
+# Concatenation preserves LBA placement: boot is sector 0, kernel starts at 1.
+# Padding is part of the kernel input, so every byte has a defined sector.
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E cat "${BOOT_BIN}" "${KERNEL_PADDED}"
     OUTPUT_FILE "${DISK_IMAGE}"

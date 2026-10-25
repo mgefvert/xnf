@@ -1,3 +1,8 @@
+# -----------------------------------------------------------------------------
+# Build the freestanding BIOS kernel with NASM and MinGW, without runtime libraries.
+# Also models sources for CLion and optionally includes disposable guest test entry points.
+# -----------------------------------------------------------------------------
+
 cmake_minimum_required(VERSION 3.20)
 project(xnf LANGUAGES C)
 
@@ -71,6 +76,8 @@ target_include_directories(kernel_c_model PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/i
 # Explicit i686 minimum; assembly checks CPUID before entering C. Keep the
 # IDE model and actual freestanding compile flags identical.
 set(KERNEL_C_FLAGS
+    # Freestanding compilation still needs explicit exclusions: GCC must not
+    # emit PIE relocations, stack-protector calls, or SSE/MMX state we do not set up.
     -m32 -march=i686 -mno-sse -mno-mmx
     -ffreestanding -fno-builtin -fno-pie -fno-stack-protector
     -fno-asynchronous-unwind-tables -fno-unwind-tables
@@ -82,6 +89,7 @@ endif()
 target_compile_options(kernel_c_model PRIVATE ${KERNEL_C_FLAGS})
 
 set(KERNEL_C_OBJECTS)
+# Each custom compile is the real build; kernel_c_model exists only for the IDE.
 foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
     get_filename_component(KERNEL_C_NAME "${KERNEL_C_SOURCE}" NAME_WE)
     set(KERNEL_C_OBJECT "${CMAKE_BINARY_DIR}/${KERNEL_C_NAME}_c.obj")
@@ -128,6 +136,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT "${KERNEL_PADDED}" "${KERNEL_SECTORS_INCLUDE}"
+    # Sector count is generated from the actual flat image, not a guessed size.
     COMMAND "${CMAKE_COMMAND}"
         "-DKERNEL_INPUT=${KERNEL_BIN}"
         "-DKERNEL_PADDED=${KERNEL_PADDED}"
@@ -142,6 +151,7 @@ add_custom_command(
 
 add_custom_command(
     OUTPUT "${BOOT_BIN}"
+    # Reassemble when the count changes: the boot DAP embeds that exact count.
     COMMAND "${NASM_EXECUTABLE}"
         -f bin
         "-I${CMAKE_BINARY_DIR}/"

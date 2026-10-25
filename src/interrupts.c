@@ -1,3 +1,8 @@
+/*
+ * Decode CPU exception frames and report fatal faults.
+ * Assembly owns entry/exit; this C policy prints diagnostics and halts the kernel.
+ */
+
 #include "types.h"
 #include "conio.h"
 
@@ -45,6 +50,8 @@ void exception_handler(const ExceptionFrame *frame)
 {
     uint32_t fault_address = 0;
 
+    /* Error-code meanings depend on the exception vector. Decode page-fault
+       bits only for vector 14, never for an unrelated exception's error word. */
     if (frame->vector == 14) {
         /* Capture CR2 before console output could cause another page fault. */
         __asm__ volatile ("mov %%cr2, %0" : "=r" (fault_address) : : "memory");
@@ -66,6 +73,8 @@ void exception_handler(const ExceptionFrame *frame)
                 (frame->error_code & (1u << 4)) ? "yes" : "no");
     }
 
+    /* There is no recovery policy or scheduler to resume another task yet.
+       CLI prevents the periodic timer from waking this fatal HLT loop. */
     for (;;) {
         __asm__ volatile ("cli; hlt");
     }

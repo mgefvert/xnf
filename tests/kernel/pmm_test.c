@@ -1,3 +1,8 @@
+/*
+ * Guest-side physical ownership checks for the optional test build.
+ * Never dereferences frame addresses, so synthetic E820 RAM need not exist in QEMU.
+ */
+
 #include "pmm.h"
 #include "paging.h"
 #include "kernel_test.h"
@@ -20,6 +25,8 @@ void pmm_self_test(void)
     uint32_t before = pmm_free_pages();
     uint32_t pages[3];
     uint32_t i;
+    /* Hold several loans simultaneously so duplicate frame ownership cannot
+       hide behind a seemingly correct allocate/free counter sequence. */
     for (i = 0; i < 3; ++i) {
         uint32_t j;
         pages[i] = pmm_alloc_page();

@@ -1,3 +1,8 @@
+/*
+ * Guest-side virtual allocation, mapping, rollback, and permission exercises.
+ * Includes separate fatal probes; the host runs each expected fault in a fresh guest.
+ */
+
 #include "vmm.h"
 #include "kernel_test.h"
 #include "paging_internal.h"
@@ -66,6 +71,8 @@ void vmm_self_test(void)
             (uint32_t)b == (uint32_t)a + 1025u * PAGE_SIZE, "virtual runs");
     require(pmm_free_pages() == physical_before - 1027u &&
             vmm_free_page_count() == virtual_before - 1027u, "allocation counts");
+    /* Each 4 KiB page holds 1024 uint32_t values. Distinct word patterns
+       across the whole run expose accidental aliases between backing frames. */
     for (i = 0; i < 1025u * 1024u; ++i) {
         require(a[i] == 0, "new page not zeroed");
         a[i] = 0xA55A0000u ^ i;
@@ -152,6 +159,8 @@ void vmm_self_test(void)
         }
     }
     count = physical_before < virtual_before ? physical_before : virtual_before;
+    /* With IRQs enabled, the large zeroing loop must not suppress timer
+       delivery for its whole duration. The host checks this measurement. */
     ticks_before = timer_ticks;
     a = vmm_alloc_pages(count);
     vmm_test_ticks_during_allocation = timer_ticks - ticks_before;

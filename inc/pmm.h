@@ -1,3 +1,8 @@
+/*
+ * Public ownership interface for individual physical RAM frames.
+ * Returned integers are physical addresses, not dereferenceable virtual pointers.
+ */
+
 #ifndef XNF_PMM_H
 #define XNF_PMM_H
 
