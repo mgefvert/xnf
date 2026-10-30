@@ -10,5 +10,6 @@
 void pmm_self_test(void);
 void vmm_self_test(void);
 void kheap_self_test(void);
+void helpers_self_test(void);
 
 #endif

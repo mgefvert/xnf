@@ -95,12 +95,17 @@ python tests/boot_qemu.py --build cmake-build-tests
 python tests/pmm_qemu.py --build cmake-build-tests
 python tests/vmm_qemu.py --build cmake-build-tests
 python tests/kheap_qemu.py --build cmake-build-tests
+python tests/helpers_qemu.py --build cmake-build-tests
 ```
 
 Shared infrastructure lives in `tests/qemu_test.py`, with no argument parsing
 or process execution at import. C test sources live in `tests/kernel/` and
 are included only with `XNF_BUILD_TESTS=ON`; their declarations live in
 `inc/kernel_test.h`, outside the public allocator interfaces.
+
+Helper tests use the heap harness in disposable guests to exercise strings,
+containers, pressure rollback, and ownership cleanup. See
+[KERNEL_HELPERS.md](KERNEL_HELPERS.md) for their contracts.
 
 ### Boot checks
 

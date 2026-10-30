@@ -59,7 +59,8 @@ def paging_snapshot(guest, label):
     return result
 
 
-def run_case(name, ram=128, entry='_kheap_test_entry', high=False, hook=None, expected=None):
+def run_case(name, ram=128, entry='_kheap_test_entry', high=False, hook=None, expected=None,
+             stage_symbol='_kheap_test_stage', final_stage=5, success_text='Heap tests passed:'):
     with socket.socket() as endpoint:
         endpoint.bind(('127.0.0.1', 0))
         port = endpoint.getsockname()[1]
@@ -120,7 +121,7 @@ def run_case(name, ram=128, entry='_kheap_test_entry', high=False, hook=None, ex
             time.sleep(0.5)
             guest.qmp('stop')
             current = screen(guest, 'screen')
-            if expected is None and guest.value('_kheap_test_stage') == 5:
+            if expected is None and guest.value(stage_symbol) == final_stage:
                 break
             if expected is not None and expected in current:
                 break
@@ -134,7 +135,7 @@ def run_case(name, ram=128, entry='_kheap_test_entry', high=False, hook=None, ex
         assert int(re.search(r'CR3=([0-9a-fA-F]+)', registers)[1], 16) == guest.value('_paging_directory_physical')
         ticks = guest.value('_timer_ticks')
         if expected is None:
-            assert 'Heap tests passed:' in current, current
+            assert success_text in current, current
             assert ownership(guest, 'after') == baseline
             assert guest.value('_heap_pages') == guest.value('_heap_allocations') == 0
             assert guest.value('_first_extent') == 0

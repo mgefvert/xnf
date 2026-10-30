@@ -1,0 +1,162 @@
+# Strings and pointer containers
+
+[inc/helpers.h](inc/helpers.h) declares the freestanding helpers implemented in
+[src/helpers.c](src/helpers.c). They need no hosted C library. Allocating
+operations use `kmalloc` and `kfree`; the heap must already be initialized.
+They inherit its one-CPU, non-preemptive normal-context restriction: do not
+call them from IRQ or exception handlers. Pure string and memory operations do
+not allocate, but callers must still synchronize access to shared data.
+
+The three containers own their objects and metadata, but **borrow all value
+pointers**. Values may be null and are never freed or dereferenced by a
+container. An output pointer on a lookup/removal may be null when the value is
+not needed. A Boolean result distinguishes an absent entry from a stored null;
+on failure output arguments are unchanged. Except where explicitly allowed
+below, object, node, buffer, and string pointers must be valid. Destroying a
+null container or string is a no-op; other operations require a live object.
+
+Allocation failures and integer overflow leave the existing object and its
+contents unchanged. `kmalloc` returns null before heap initialization or under
+memory pressure, so creation and growth can fail; check their return values.
+
+## Byte and string primitives
+
+`StringView` is a borrowed `{data, length}` pair: its length counts bytes and
+it does not require a terminator. A null data pointer is valid only with length
+zero. `string_view(data, length)` makes a view over an existing readable byte
+range; `string_view_cstr(s)` measures an existing terminated C string.
+`STRING_VIEW_LITERAL("text")` constructs a view without a runtime scan; pass
+only a string literal or character array, not a pointer. The caller guarantees
+the bytes remain readable while the view is used. Views can contain zero bytes.
+`string_view_equal` compares length then contents; invalid views compare false.
+
+`kstrlen`, `kstrnlen`, `kstrcmp`, `kstrncmp`, `kstrchr`, and `kstrrchr` follow
+the usual byte-oriented C string semantics. Unbounded operations require valid
+terminated strings; bounded operations require readable bytes through a
+terminator or their limit. `kmemcmp` and `kmemset` operate on valid byte ranges.
+For zero-length byte operations, null pointers are permitted. These low-level
+functions cannot discover whether an arbitrary pointer really has enough space.
+
+`kmemcpy_checked(dst, capacity, src, size)` and `kmemmove_checked(...)` reject
+an insufficient destination capacity or null nonempty input without writing.
+The caller must supply truthful capacities and a readable source of `size`
+bytes. Copy requires nonoverlapping ranges; move handles overlap. `kstr_copy`
+and `kstr_append` accept a source view and destination capacity, support
+overlap, and write a trailing zero on success. Append requires the destination
+to contain a terminator within its capacity. Both reject insufficient space or
+invalid arguments without changing the destination. A zero capacity fails.
+
+## Managed strings
+
+`KString` owns one heap allocation containing length, capacity, characters,
+and a trailing zero. `kstring_create(view)` copies its input; empty views are
+accepted. `kstring_destroy` frees the allocation. `kstring_length` and
+`kstring_capacity` are constant-time byte counts; capacity excludes the trailing
+zero. `kstring_data` returns a read-only terminated pointer and `kstring_view`
+returns a borrowed view. Zero bytes inside a view are retained; C-string
+consumers such as `kputs` stop at the first zero.
+
+`kstring_reserve(&s, capacity)`, `kstring_assign(&s, view)`,
+`kstring_append(&s, view)`, and `kstring_insert(&s, index, view)` return false
+on invalid arguments, overflow, or allocation failure. Insert accepts positions
+from zero through the current length. Growth doubles capacity, starting at
+eight bytes where applicable, and allocates/copies/frees because the heap has
+no realloc. Mutators may move the handle; use the updated `s`, and reacquire
+any borrowed data pointer or view after a successful mutation. Input views may
+refer to bytes within the same string's current contents, including during
+growth or insertion. Insertion of an aliased view may allocate even if spare
+capacity exists. On failure the handle and contents are unchanged.
+
+## Array List
+
+`list_create`/`list_destroy` manage the list and its backing pointer array.
+`list_count` and `list_capacity` report entries and reserved slots. Append and
+insert return false on allocation failure; insertion accepts indices through
+count and shifts later pointers. Capacity starts at eight slots and doubles;
+`list_reserve` guarantees at least the requested capacity. It checks pointer
+array multiplication and growth for overflow. `list_get`, `list_set`, and
+`list_remove` return false for an out-of-range index; set optionally reports
+the previous pointer, and remove shifts later pointers. `list_pop` removes the
+last pointer. `list_clear` keeps capacity; `list_shrink_to_fit` explicitly
+shrinks to count, releasing the buffer entirely when empty. Shrinking may fail
+without changing the list. Array growth or shrinking does not move the objects
+pointed to by its entries. Access by index is constant time, append is amortized
+constant time, and middle insertion/removal is linear.
+
+## Doubly linked list
+
+`linked_list_create`, `linked_list_destroy`, and `linked_list_clear` manage
+the list and its individually allocated nodes. `linked_list_push_front`,
+`linked_list_push_back`, `linked_list_insert_before`, and
+`linked_list_insert_after` return the new node or null on failure. End accessors
+`linked_list_first`/`linked_list_last` return null for an empty list;
+`linked_list_next`/`linked_list_previous` return null at the corresponding end.
+`linked_list_value` reads a node's borrowed value, and `linked_list_count`
+reports the number of nodes. `linked_list_remove` unlinks a known node;
+`linked_list_pop_front`/`linked_list_pop_back` remove an endpoint. They return
+false for an empty endpoint or a live node belonging to another list. Nodes
+must be live: removal, clear, or destroy invalidates their handles. Inserting
+or removing a known node is constant time; there is no indexed access API.
+
+## Dictionary
+
+The dictionary is a separate-chaining hash table. Keys are case-sensitive
+`StringView`s; FNV-1a hashes their bytes and comparison checks length and bytes,
+so hash collisions are safe. Each entry stores its own copy of the key bytes
+and a trailing zero in the same heap allocation as its metadata. Embedded zero
+bytes remain part of the key. `dictionary_create`, `dictionary_destroy`, and
+`dictionary_clear` manage the table and entries; clear keeps its bucket array.
+`dictionary_count` reports entries. `dictionary_reserve(d, n)` ensures
+room for `n` entries at a maximum 75% load, growing power-of-two bucket arrays;
+failure leaves the table unchanged.
+
+`dictionary_insert` reports `DICTIONARY_OK`, `DICTIONARY_EXISTS`,
+`DICTIONARY_NO_MEMORY`, or `DICTIONARY_INVALID` for an invalid dictionary or
+view. `dictionary_set` inserts or replaces a value and can report whether an
+entry existed and its previous value; on replacement it retains the existing
+owned key. `dictionary_get` and `dictionary_contains` check membership;
+`dictionary_remove` deletes an entry and optionally returns its value.
+`dictionary_iter_begin` and `dictionary_iter_next` enumerate borrowed key
+views and values in unspecified order. Structural mutations (including a
+successful reserve that grows the table) invalidate iterators. A key view
+returned by iteration borrows the entry's own bytes: it stays valid until that
+entry is removed, the dictionary is cleared, or it is destroyed. Rehashing
+and replacing a value do not move or change the stored key. Replacing a value
+does not change table structure, but avoid changing values while using an
+iterator if a consistent snapshot is required.
+
+**The dictionary owns its key copies.** Input views need to remain readable and
+unchanged only for the duration of the call. The original string can be changed
+or freed immediately after a successful insertion. The dictionary releases each
+key with its entry on removal, clear, or destruction. It still borrows values.
+An entry size that would overflow, failure to allocate the entry, or failure to
+grow the table returns `DICTIONARY_NO_MEMORY` without changing the dictionary
+or outputs. The empty view is a valid key.
+
+For example, the dictionary keeps the key after the source string is destroyed:
+
+```c
+KString *name = kstring_create(STRING_VIEW_LITERAL("console"));
+Dictionary *devices = dictionary_create();
+if (name && devices &&
+    dictionary_insert(devices, kstring_view(name), device) == DICTIONARY_OK) {
+    kstring_destroy(name);
+    name = 0;
+    void *found;
+    if (dictionary_get(devices, STRING_VIEW_LITERAL("console"), &found)) {
+        /* found is the caller-owned device pointer. */
+    }
+}
+dictionary_destroy(devices);
+kstring_destroy(name);
+```
+
+## Validation
+
+The optional `tests/kernel/helpers_test.c` is linked only in a test build.
+`python tests/helpers_qemu.py --build cmake-build-tests` runs its entry in
+disposable 128/512 MiB guests and checks ownership restoration, mappings,
+timer progress, and fault/reset logs. The guest covers string bounds and
+aliasing, list growth, linked traversal, dictionary collisions, owned-key
+lifetimes and rehashing, and rollback under real heap exhaustion. See
+[KERNEL_BUILD.md](KERNEL_BUILD.md) for configuration and tool discovery.

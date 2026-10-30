@@ -13,6 +13,7 @@ initialize globals, allocate memory, or print messages on its behalf.
 | [KERNEL_BOOT.md](KERNEL_BOOT.md) | From BIOS entry to C: CPU requirements, addresses, descriptors, stacks |
 | [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | Firmware memory maps, physical ownership, paging, virtual allocation |
 | [KERNEL_HEAP.md](KERNEL_HEAP.md) | Aligned byte allocations, calloc, coalescing, and page reclamation |
+| [KERNEL_HELPERS.md](KERNEL_HELPERS.md) | Managed strings and borrowed-pointer containers |
 | [KERNEL_IO.md](KERNEL_IO.md) | VGA cells, hardware cursor, port I/O, formatting API |
 | [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exceptions, normalized stack frames, PIC, timer, idle loop |
 | [KERNEL_BUILD.md](KERNEL_BUILD.md) | Freestanding toolchain, disk-image pipeline, optional tests and validation |
@@ -54,6 +55,7 @@ when the infrastructure and allocators are ready.
 | `src/paging.c`, `asm/paging.asm` | Page-table mechanics and hardware activation |
 | `src/vmm.c` | Virtual range ownership and mappings backed by PMM frames |
 | `src/kheap.c` | Byte-sized object allocations inside VMM-backed extents |
+| `src/helpers.c` | Managed strings, byte helpers, and borrowed-pointer containers |
 | `src/conio.c` | Text output, formatting, and cursor/color state |
 | `asm/interrupts.asm`, `src/interrupts.c` | Hardware entry/exit and exception diagnostics |
 | `src/kernel.c` | Initialization order, timer bookkeeping, idle policy |
