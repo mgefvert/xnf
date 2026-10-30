@@ -96,6 +96,7 @@ python tests/pmm_qemu.py --build cmake-build-tests
 python tests/vmm_qemu.py --build cmake-build-tests
 python tests/kheap_qemu.py --build cmake-build-tests
 python tests/helpers_qemu.py --build cmake-build-tests
+python tests/object_qemu.py --build cmake-build-tests
 ```
 
 Shared infrastructure lives in `tests/qemu_test.py`, with no argument parsing
@@ -106,6 +107,9 @@ are included only with `XNF_BUILD_TESTS=ON`; their declarations live in
 Helper tests use the heap harness in disposable guests to exercise strings,
 containers, pressure rollback, and ownership cleanup. See
 [KERNEL_HELPERS.md](KERNEL_HELPERS.md) for their contracts.
+
+Object-manager tests use the same heap harness, plus isolated pre-heap and
+invalid-release guests. See [KERNEL_OBJECTS.md](KERNEL_OBJECTS.md).
 
 ### Boot checks
 

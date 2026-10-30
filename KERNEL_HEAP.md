@@ -18,6 +18,7 @@ Calling initialization again or before VMM initialization panics.
 | `kmalloc(size)` | At least `size` payload bytes, 16-byte aligned; contents unspecified |
 | `kcalloc(count, size)` | Same alignment, with `count * size` payload bytes cleared |
 | `kfree(pointer)` | Release one whole object using its exact live payload pointer |
+| `kheap_is_initialized()` | Whether heap initialization has completed; allocates nothing |
 | `kheap_allocated_pages()` | VMM pages currently owned by heap extents |
 | `kheap_live_allocations()` | Number of live objects, excluding free blocks and metadata |
 

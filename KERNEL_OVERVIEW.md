@@ -14,6 +14,7 @@ initialize globals, allocate memory, or print messages on its behalf.
 | [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | Firmware memory maps, physical ownership, paging, virtual allocation |
 | [KERNEL_HEAP.md](KERNEL_HEAP.md) | Aligned byte allocations, calloc, coalescing, and page reclamation |
 | [KERNEL_HELPERS.md](KERNEL_HELPERS.md) | Managed strings and borrowed-pointer containers |
+| [KERNEL_OBJECTS.md](KERNEL_OBJECTS.md) | Typed objects, named registry, and reference ownership |
 | [KERNEL_IO.md](KERNEL_IO.md) | VGA cells, hardware cursor, port I/O, formatting API |
 | [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exceptions, normalized stack frames, PIC, timer, idle loop |
 | [KERNEL_BUILD.md](KERNEL_BUILD.md) | Freestanding toolchain, disk-image pipeline, optional tests and validation |
@@ -36,8 +37,8 @@ The technical guides explain current behavior and limitations for any reader.
 5. C initializes the console and normalized memblock map, prepares and enables
    paging, initializes PMM, and permanently retires bootstrap allocation.
    A test build additionally runs the PMM ownership self-test.
-6. VMM initializes its virtual arena, then the heap initializes without reserving
-   backing pages. The normal kernel loop prints occasional
+6. VMM initializes its virtual arena, then the heap and object manager initialize
+   without reserving backing pages. The normal kernel loop prints occasional
    progress dots and uses `STI; HLT` to wait for interrupts.
 
 The order is part of correctness: early C cannot use zero-initialized globals
@@ -56,6 +57,7 @@ when the infrastructure and allocators are ready.
 | `src/vmm.c` | Virtual range ownership and mappings backed by PMM frames |
 | `src/kheap.c` | Byte-sized object allocations inside VMM-backed extents |
 | `src/helpers.c` | Managed strings, byte helpers, and borrowed-pointer containers |
+| `src/object.c` | Typed object lifetime and named-object registry |
 | `src/conio.c` | Text output, formatting, and cursor/color state |
 | `asm/interrupts.asm`, `src/interrupts.c` | Hardware entry/exit and exception diagnostics |
 | `src/kernel.c` | Initialization order, timer bookkeeping, idle policy |

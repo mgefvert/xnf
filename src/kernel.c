@@ -10,6 +10,8 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "kheap.h"
+#include "object.h"
+#include "panic.h"
 #ifdef XNF_BUILD_TESTS
 #include "kernel_test.h"
 #endif
@@ -49,6 +51,7 @@ void kernel_main(void)
 #endif
     vmm_init();
     kheap_init();
+    if (object_manager_init() != OBJECT_OK) kernel_panic("Object", "initialization failed");
 
     kprintf("Kernel started.\n");
 

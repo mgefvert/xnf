@@ -144,6 +144,11 @@ void kheap_init(void)
     kputs("Heap ready.\n");
 }
 
+bool kheap_is_initialized(void)
+{
+    return heap_initialized;
+}
+
 void *kmalloc(uint32_t size)
 {
     HeapExtent *extent;
