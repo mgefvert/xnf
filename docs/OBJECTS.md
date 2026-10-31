@@ -1,6 +1,6 @@
 # Kernel object manager
 
-[inc/object.h](inc/object.h) and [src/object.c](src/object.c) provide typed,
+[inc/object.h](../inc/object.h) and [src/object.c](../src/object.c) provide typed,
 heap-owned objects and a registry of named objects. They provide lifetime and
 discovery; individual subsystems supply operations and state. There are no
 device drivers, scheduler, waiting primitives, user handles, or access control
@@ -19,8 +19,8 @@ is a no-op, including before initialization.
 All object-manager operations, including callbacks and release, are restricted
 to one CPU and non-preemptive normal context. Do not call them from IRQ or
 exception handlers. They inherit the heap and Dictionary contracts and preserve
-the caller's interrupt-enable flag; they do not synchronize access. A scheduler,
-SMP, or interrupt-side access requires a new synchronization design. In
+the caller's interrupt-enable flag; they do not synchronize access. Competing
+scheduled threads, SMP, or interrupt-side access require a new synchronization design. In
 particular, lookup plus reference acquisition and name removal plus reference
 release must become indivisible. Destructors must run outside future locks.
 
@@ -152,4 +152,4 @@ checks, type-name validation and identity, aliases, name reuse, references after
 destruction, real heap exhaustion and recovery, interrupt state, and complete
 heap/PMM/VMM ownership cleanup. A test-only fixture reaches reference-count
 saturation without billions of operations. The host also checks page tables, control
-registers, timer progress, and fault/reset logs. See [KERNEL_BUILD.md](KERNEL_BUILD.md).
+registers, timer progress, and fault/reset logs. See [BUILD.md](BUILD.md).

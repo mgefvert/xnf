@@ -1,7 +1,7 @@
 # Working on XNF
 
 XNF is a tiny educational i686 kernel in NASM and freestanding C. Start with
-[KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md) for the architecture and reading order.
+[OVERVIEW.md](docs/OVERVIEW.md) for the architecture and reading order.
 This file describes how to work on the repository; subsystem contracts live
 in the technical guides.
 
@@ -9,13 +9,13 @@ in the technical guides.
 
 | Guide | Read when changing |
 | --- | --- |
-| [KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md) | Initialization order, scope, or subsystem boundaries |
-| [KERNEL_BOOT.md](KERNEL_BOOT.md) | BIOS entry, CPU checks, addressing, GDT, stacks, or linker layout |
-| [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | E820, memblock, PMM, paging, VMM, or synchronization |
-| [KERNEL_HEAP.md](KERNEL_HEAP.md) | Byte allocations, splitting/coalescing, calloc, or extent reclamation |
-| [KERNEL_IO.md](KERNEL_IO.md) | VGA output, cursor/color handling, formatting, or port I/O |
-| [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exception frames, IDT/PIC, timers, faults, or idle behavior |
-| [KERNEL_BUILD.md](KERNEL_BUILD.md) | Compiler flags, generated artifacts, build dependencies, or QEMU tests |
+| [OVERVIEW.md](docs/OVERVIEW.md) | Initialization order, scope, or subsystem boundaries |
+| [BOOT.md](docs/BOOT.md) | BIOS entry, CPU checks, addressing, GDT, stacks, or linker layout |
+| [MEMORY.md](docs/MEMORY.md) | E820, memblock, PMM, paging, VMM, or synchronization |
+| [HEAP.md](docs/HEAP.md) | Byte allocations, splitting/coalescing, calloc, or extent reclamation |
+| [IO.md](docs/IO.md) | VGA output, cursor/color handling, formatting, or port I/O |
+| [INTERRUPTS.md](docs/INTERRUPTS.md) | Exception frames, IDT/PIC, timers, faults, or idle behavior |
+| [BUILD.md](docs/BUILD.md) | Compiler flags, generated artifacts, build dependencies, or QEMU tests |
 
 ## Editing rules
 
@@ -40,7 +40,7 @@ in the technical guides.
 
 Use the existing normal configuration (`cmake-build-debug`) and a separate
 `cmake-build-tests` configured with `-DXNF_BUILD_TESTS=ON`. See
-[KERNEL_BUILD.md](KERNEL_BUILD.md) for setup and tool discovery.
+[BUILD.md](docs/BUILD.md) for setup and tool discovery.
 
 ```text
 cmake --build cmake-build-debug

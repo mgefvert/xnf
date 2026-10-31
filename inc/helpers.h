@@ -1,6 +1,6 @@
 /*
  * Freestanding strings and pointer containers backed by the kernel heap.
- * See KERNEL_HELPERS.md for ownership, failure and execution-context contracts.
+ * See docs/HELPERS.md for ownership, failure and execution-context contracts.
  */
 #ifndef XNF_HELPERS_H
 #define XNF_HELPERS_H
@@ -62,7 +62,13 @@ bool list_remove(List *list, uint32_t index, void **out_value);
 bool list_pop(List *list, void **out_value);
 
 typedef struct LinkedList LinkedList;
-typedef struct LinkedListNode LinkedListNode;
+/* Embed as the first member of a caller-owned object. The first two pointers
+   in that object are the previous and next nodes, in that order. Initialize
+   both to NULL before insertion; removal and clear reset them to NULL. */
+typedef struct LinkedListNode {
+    struct LinkedListNode *previous;
+    struct LinkedListNode *next;
+} LinkedListNode;
 LinkedList *linked_list_create(void);
 void linked_list_destroy(LinkedList *list);
 void linked_list_clear(LinkedList *list);
@@ -71,14 +77,16 @@ LinkedListNode *linked_list_first(const LinkedList *list);
 LinkedListNode *linked_list_last(const LinkedList *list);
 LinkedListNode *linked_list_next(const LinkedListNode *node);
 LinkedListNode *linked_list_previous(const LinkedListNode *node);
-void *linked_list_value(const LinkedListNode *node);
-LinkedListNode *linked_list_push_front(LinkedList *list, void *value);
-LinkedListNode *linked_list_push_back(LinkedList *list, void *value);
-LinkedListNode *linked_list_insert_before(LinkedList *list, LinkedListNode *node, void *value);
-LinkedListNode *linked_list_insert_after(LinkedList *list, LinkedListNode *node, void *value);
-bool linked_list_remove(LinkedList *list, LinkedListNode *node, void **out_value);
-bool linked_list_pop_front(LinkedList *list, void **out_value);
-bool linked_list_pop_back(LinkedList *list, void **out_value);
+/* Nodes must be detached and belong to at most one list. An anchor or node
+   passed for removal must belong to list. These membership preconditions
+   cannot be fully checked from two links, notably for a singleton list. */
+bool linked_list_push_front(LinkedList *list, LinkedListNode *node);
+bool linked_list_push_back(LinkedList *list, LinkedListNode *node);
+bool linked_list_insert_before(LinkedList *list, LinkedListNode *anchor, LinkedListNode *node);
+bool linked_list_insert_after(LinkedList *list, LinkedListNode *anchor, LinkedListNode *node);
+bool linked_list_remove(LinkedList *list, LinkedListNode *node);
+LinkedListNode *linked_list_pop_front(LinkedList *list);
+LinkedListNode *linked_list_pop_back(LinkedList *list);
 
 typedef struct Dictionary Dictionary;
 typedef enum DictionaryResult {

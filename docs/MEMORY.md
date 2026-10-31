@@ -10,9 +10,9 @@ Memory management has four ownership layers:
 | Heap (`src/kheap.c`) | Divide VMM extents into aligned byte-sized objects | Object payload pointers |
 
 `src/paging.c` supplies translation mechanics to VMM, without owning frames.
-See [KERNEL_HEAP.md](KERNEL_HEAP.md) for byte-granularity allocation. Start with the
-[overview](KERNEL_OVERVIEW.md); build/test commands are in
-[KERNEL_BUILD.md](KERNEL_BUILD.md).
+See [HEAP.md](HEAP.md) for byte-granularity allocation. Start with the
+[overview](OVERVIEW.md); build/test commands are in
+[BUILD.md](BUILD.md).
 
 ## Bootstrap region storage
 
@@ -27,7 +27,7 @@ addresses. No allocation is needed to manage either array.
 Before `.bss` is cleared or the final stack is used, `boot_memory_check()`
 requires the whole kernel extent to be usable RAM. Enabled non-available
 E820 overlaps and coverage holes reject boot. It uses the temporary loaded
-stack, not allocator state. See [boot and CPU setup](KERNEL_BOOT.md) for the
+stack, not allocator state. See [boot and CPU setup](BOOT.md) for the
 entry sequence and early failure path.
 
 ## Building the map
@@ -186,15 +186,16 @@ Metadata/mapping disagreement is an invariant failure and panics.
 
 Operations preserve IF. Scans and zeroing leave IRQs in the caller's state;
 only individual PMM operations and paging edits mask them. Transactions rely
-on one CPU, no preemptive scheduler, and no IRQ/exception handler entering
+on one CPU, non-preemptive normal context, and no IRQ/exception handler entering
 the VMM. Reserved runs are private until fully initialized. Timer delivery
 can continue during large allocations when the caller has enabled IRQs.
-Add synchronization before introducing preemption or SMP. There are no SMP
+The experimental scheduler does not make VMM safe for competing threads;
+callers must exclude preemption for the complete transaction. There are no SMP
 locks or TLB shootdowns. The caller must stop using memory before freeing it
 and must not separately free its backing frames through PMM. As with ordinary pointer allocators, a stale pointer cannot be detected
 after its address has been reused for a new allocation.
 
-The [heap](KERNEL_HEAP.md) now provides `kmalloc`, `kcalloc`, and `kfree` on top
+The [heap](HEAP.md) now provides `kmalloc`, `kcalloc`, and `kfree` on top
 of VMM. Kernel section protection, stack guards,
 demand paging, process address spaces, and swapping remain future work.
 
@@ -242,5 +243,5 @@ A frame number from `pmm_alloc_page()` must be mapped before it is used as
 memory; use the heap for ordinary objects and VMM for page-sized interfaces.
 Do not separately free a
 VMM allocation's physical frames or modify its mappings through the internal
-paging interface. See [validation coverage](KERNEL_BUILD.md#validation) for
+paging interface. See [validation coverage](BUILD.md#validation) for
 exhaustion, rollback, permission, and ownership checks.

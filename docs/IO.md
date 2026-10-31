@@ -1,9 +1,9 @@
 # XNF console and hardware I/O
 
-[src/conio.c](src/conio.c) and [inc/conio.h](inc/conio.h) provide the console.
+[src/conio.c](../src/conio.c) and [inc/conio.h](../inc/conio.h) provide the console.
 The BIOS loader reads the disk, but the running kernel's current I/O consists
 of VGA text memory, the VGA cursor, and the interrupt-controller operations
-described in [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md). There is no keyboard
+described in [INTERRUPTS.md](INTERRUPTS.md). There is no keyboard
 driver or general device framework yet.
 
 ## Text memory and color
@@ -48,7 +48,7 @@ backspace moves back and erases when a previous cell exists.
 
 ## Output API and formatting
 
-All public functions use the kernel's [cdecl ABI](KERNEL_BOOT.md#linker-layout-and-c-interface).
+All public functions use the kernel's [cdecl ABI](BOOT.md#linker-layout-and-c-interface).
 
 | Function | Behavior |
 | --- | --- |
@@ -90,4 +90,4 @@ halt; they do not implement concurrent or recoverable output.
 console, and halts permanently. Pre-.bss boot failure must instead use the
 raw VGA path because console cursor state is not initialized yet. QEMU tests
 read VGA cells as physical memory, so these diagnostics are observable even
-without a visible emulator window. See [validation](KERNEL_BUILD.md#validation).
+without a visible emulator window. See [validation](BUILD.md#validation).

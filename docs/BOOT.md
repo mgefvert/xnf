@@ -1,9 +1,9 @@
 # XNF boot and processor setup
 
-This guide follows [asm/boot.asm](asm/boot.asm),
-[asm/kernel.asm](asm/kernel.asm), [src/boot_memory.c](src/boot_memory.c), and
-[kernel.ld](kernel.ld). See the [overview](KERNEL_OVERVIEW.md) for the whole
-kernel and [build guide](KERNEL_BUILD.md) for how the flat image is produced.
+This guide follows [asm/boot.asm](../asm/boot.asm),
+[asm/kernel.asm](../asm/kernel.asm), [src/boot_memory.c](../src/boot_memory.c), and
+[kernel.ld](../kernel.ld). See the [overview](OVERVIEW.md) for the whole
+kernel and [build guide](BUILD.md) for how the flat image is produced.
 
 ## BIOS loader
 
@@ -50,9 +50,9 @@ use a truncated map.
 The stored layout is 24 bytes per record: 64-bit base, 64-bit length, 32-bit
 type, and 32-bit attributes. Legacy 20-byte responses are normalized to
 attributes `1`, meaning enabled. An extended record whose attribute bit 0
-is clear stays disabled. The shared C layout is in [inc/e820.h](inc/e820.h).
+is clear stays disabled. The shared C layout is in [inc/e820.h](../inc/e820.h).
 Record order is retained; normalization into non-overlapping regions happens
-later in [memory management](KERNEL_MEMORY.md).
+later in [memory management](MEMORY.md).
 
 ## Protected-mode transition
 
@@ -100,4 +100,4 @@ MinGW decorates C symbols with a leading underscore; declarations of special
 linker symbols use GCC `__asm__` names to bypass that decoration.
 
 Assembly initializes interrupts and calls `kernel_main()`. The subsequent
-allocator order is described in [KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md).
+allocator order is described in [OVERVIEW.md](OVERVIEW.md).

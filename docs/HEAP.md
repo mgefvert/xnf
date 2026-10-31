@@ -1,10 +1,10 @@
 # XNF kernel heap
 
-[src/kheap.c](src/kheap.c) provides `kmalloc`, `kcalloc`, and `kfree` through
-[inc/kheap.h](inc/kheap.h). It divides VMM allocations into byte-sized objects.
+[src/kheap.c](../src/kheap.c) provides `kmalloc`, `kcalloc`, and `kfree` through
+[inc/kheap.h](../inc/kheap.h). It divides VMM allocations into byte-sized objects.
 The heap owns those page allocations; callers own only their returned payloads.
-Read [KERNEL_MEMORY.md](KERNEL_MEMORY.md) for the underlying PMM/VMM contracts
-and [KERNEL_BUILD.md](KERNEL_BUILD.md#heap-checks) for the test suite.
+Read [MEMORY.md](MEMORY.md) for the underlying PMM/VMM contracts
+and [BUILD.md](BUILD.md#heap-checks) for the test suite.
 
 ## API and initialization
 
@@ -102,11 +102,11 @@ payload; only complete extent reclamation revokes the pages.
 
 ## Execution context
 
-Heap operations inherit VMM's execution model: one CPU, no preemptive scheduler,
+Heap operations inherit VMM's execution model: one CPU, non-preemptive normal context,
 and no calls from IRQ/exception handlers. They preserve the caller's IF and
 do not mask interrupts around scans or clearing. Individual PMM/page-table
 operations retain their short interrupt guards. Introduce synchronization
-before adding scheduling, SMP, or another execution context that uses the heap.
+before allowing scheduled threads, SMP, or another execution context to use the heap concurrently.
 
 ```c
 uint32_t *values = kcalloc(100, sizeof(*values));

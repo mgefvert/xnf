@@ -23,12 +23,12 @@ cmake --build cmake-build-debug
 cmake --build cmake-build-debug --target run
 ```
 
-The build produces a raw BIOS disk image, `cmake-build-debug/xnf.img`. See [KERNEL_BUILD.md](KERNEL_BUILD.md) for toolchain 
+The build produces a raw BIOS disk image, `cmake-build-debug/xnf.img`. See [BUILD.md](docs/BUILD.md) for toolchain
 setup and test instructions.
 
 ## Documentation
 
-Start with [KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md) for the architecture and links to the subsystem guides.
+Start with [OVERVIEW.md](docs/OVERVIEW.md) for the architecture and links to the subsystem guides.
 
 ## Contributing
 

@@ -1,7 +1,7 @@
 # Building and validating XNF
 
 The build creates a raw BIOS disk image, not a host executable to run directly.
-See the [overview](KERNEL_OVERVIEW.md) for architecture and [boot guide](KERNEL_BOOT.md)
+See the [overview](OVERVIEW.md) for architecture and [boot guide](BOOT.md)
 for the loader and linker assumptions that the build must preserve.
 
 ## Tools and configurations
@@ -45,7 +45,7 @@ Optional C tests live under `tests/kernel/` and are included only when
 ## Image pipeline
 
 1. Assemble `asm/kernel.asm` with NASM `-f win32`. It includes `paging.asm`
-   and `interrupts.asm` after switching to `BITS 32`; both files must remain
+   `interrupts.asm`, and `threads.asm` after switching to `BITS 32`; all must remain
    explicit custom-command dependencies.
 2. Compile the freestanding C files and link with `kernel.ld`. The assembly
    entry object comes first so the first image byte is the real-mode entry.
@@ -78,8 +78,8 @@ cmake --build cmake-build-debug --target run
 Equivalently, launch QEMU with `-drive format=raw,file=PATH_TO_BUILD/xnf.img`.
 The image should report memory initialization and paging success, reach
 `Kernel started.`, and continue printing timer dots. XNF assumes the BIOS VGA
-text mode; see [I/O](KERNEL_IO.md) and
-[interrupts](KERNEL_INTERRUPTS.md).
+text mode; see [I/O](IO.md) and
+[interrupts](INTERRUPTS.md).
 
 ## Validation
 
@@ -101,6 +101,7 @@ python tests/vmm_qemu.py --build cmake-build-tests
 python tests/kheap_qemu.py --build cmake-build-tests
 python tests/helpers_qemu.py --build cmake-build-tests
 python tests/object_qemu.py --build cmake-build-tests
+python tests/scheduler_qemu.py --build cmake-build-tests
 ```
 
 Shared infrastructure lives in `tests/qemu_test.py`, with no argument parsing
@@ -110,10 +111,13 @@ are included only with `XNF_BUILD_TESTS=ON`; their declarations live in
 
 Helper tests use the heap harness in disposable guests to exercise strings,
 containers, pressure rollback, and ownership cleanup. See
-[KERNEL_HELPERS.md](KERNEL_HELPERS.md) for their contracts.
+[HELPERS.md](HELPERS.md) for their contracts.
 
 Object-manager tests use the same heap harness, plus isolated pre-heap and
-invalid-release guests. See [KERNEL_OBJECTS.md](KERNEL_OBJECTS.md).
+invalid-release guests. See [OBJECTS.md](OBJECTS.md).
+
+Scheduler tests use disposable guests for explicit and timer-driven switches;
+see [THREADS.md](THREADS.md).
 
 ### Boot checks
 
@@ -172,5 +176,5 @@ double frees both inside live extents and after unmapping, foreign VMM and
 unmapped addresses, and repeated/out-of-order initialization. These must panic
 and remain halted with IRQs disabled and stable ownership. A final guest writes
 through a released extent pointer and must fault at that address with the
-expected non-present supervisor-write error code. See [KERNEL_HEAP.md](KERNEL_HEAP.md)
+expected non-present supervisor-write error code. See [HEAP.md](HEAP.md)
 for the supported API and execution model.

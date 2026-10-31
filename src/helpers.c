@@ -1,6 +1,6 @@
 /*
  * Heap-backed strings and pointer containers for normal kernel context.
- * Containers borrow values; dictionary entries own key bytes. See KERNEL_HELPERS.md.
+ * Containers borrow values; dictionary entries own key bytes. See docs/HELPERS.md.
  */
 #include "helpers.h"
 #include "kheap.h"
@@ -329,11 +329,6 @@ bool list_pop(List *list, void **out_value)
     return list->count && list_remove(list, list->count - 1u, out_value);
 }
 
-struct LinkedListNode {
-    struct LinkedListNode *previous, *next;
-    LinkedList *owner;
-    void *value;
-};
 struct LinkedList { LinkedListNode *first, *last; uint32_t count; };
 
 LinkedList *linked_list_create(void)
@@ -345,7 +340,11 @@ LinkedList *linked_list_create(void)
 void linked_list_clear(LinkedList *list)
 {
     LinkedListNode *node = list->first;
-    while (node) { LinkedListNode *next = node->next; kfree(node); node = next; }
+    while (node) {
+        LinkedListNode *next = node->next;
+        node->previous = node->next = 0;
+        node = next;
+    }
     list->first = list->last = 0;
     list->count = 0;
 }
@@ -355,41 +354,51 @@ LinkedListNode *linked_list_first(const LinkedList *list) { return list->first; 
 LinkedListNode *linked_list_last(const LinkedList *list) { return list->last; }
 LinkedListNode *linked_list_next(const LinkedListNode *node) { return node->next; }
 LinkedListNode *linked_list_previous(const LinkedListNode *node) { return node->previous; }
-void *linked_list_value(const LinkedListNode *node) { return node->value; }
-
-static LinkedListNode *linked_insert(LinkedList *list, LinkedListNode *previous,
-                                     LinkedListNode *next, void *value)
+static bool linked_insert(LinkedList *list, LinkedListNode *previous,
+                          LinkedListNode *next, LinkedListNode *node)
 {
-    LinkedListNode *node;
-    if (list->count == MAX_U32 || !(node = kmalloc(sizeof(*node)))) return 0;
-    node->previous = previous; node->next = next; node->owner = list; node->value = value;
+    /* A singleton in a different list also has two null links; callers must
+       establish detached ownership, which these two pointers cannot prove. */
+    if (!node || node->previous || node->next || node == list->first || list->count == MAX_U32)
+        return false;
+    node->previous = previous; node->next = next;
     if (previous) previous->next = node; else list->first = node;
     if (next) next->previous = node; else list->last = node;
     ++list->count;
-    return node;
+    return true;
 }
-LinkedListNode *linked_list_push_front(LinkedList *list, void *value)
-{ return linked_insert(list, 0, list->first, value); }
-LinkedListNode *linked_list_push_back(LinkedList *list, void *value)
-{ return linked_insert(list, list->last, 0, value); }
-LinkedListNode *linked_list_insert_before(LinkedList *list, LinkedListNode *node, void *value)
-{ return node && node->owner == list ? linked_insert(list, node->previous, node, value) : 0; }
-LinkedListNode *linked_list_insert_after(LinkedList *list, LinkedListNode *node, void *value)
-{ return node && node->owner == list ? linked_insert(list, node, node->next, value) : 0; }
-bool linked_list_remove(LinkedList *list, LinkedListNode *node, void **out_value)
+bool linked_list_push_front(LinkedList *list, LinkedListNode *node)
+{ return linked_insert(list, 0, list->first, node); }
+bool linked_list_push_back(LinkedList *list, LinkedListNode *node)
+{ return linked_insert(list, list->last, 0, node); }
+bool linked_list_insert_before(LinkedList *list, LinkedListNode *anchor, LinkedListNode *node)
+{ return anchor && linked_insert(list, anchor->previous, anchor, node); }
+bool linked_list_insert_after(LinkedList *list, LinkedListNode *anchor, LinkedListNode *node)
+{ return anchor && linked_insert(list, anchor, anchor->next, node); }
+bool linked_list_remove(LinkedList *list, LinkedListNode *node)
 {
-    if (!node || node->owner != list) return false;
-    if (out_value) *out_value = node->value;
+    /* Endpoints identify obvious nonmembers without a linear membership scan.
+       An interior node from another list cannot be identified from two links. */
+    if (!node || !list->count || (!node->previous && node != list->first) ||
+        (!node->next && node != list->last)) return false;
     if (node->previous) node->previous->next = node->next; else list->first = node->next;
     if (node->next) node->next->previous = node->previous; else list->last = node->previous;
     --list->count;
-    kfree(node);
+    node->previous = node->next = 0;
     return true;
 }
-bool linked_list_pop_front(LinkedList *list, void **out_value)
-{ return linked_list_remove(list, list->first, out_value); }
-bool linked_list_pop_back(LinkedList *list, void **out_value)
-{ return linked_list_remove(list, list->last, out_value); }
+LinkedListNode *linked_list_pop_front(LinkedList *list)
+{
+    LinkedListNode *node = list->first;
+    if (node) linked_list_remove(list, node);
+    return node;
+}
+LinkedListNode *linked_list_pop_back(LinkedList *list)
+{
+    LinkedListNode *node = list->last;
+    if (node) linked_list_remove(list, node);
+    return node;
+}
 
 typedef struct DictionaryEntry {
     struct DictionaryEntry *next;

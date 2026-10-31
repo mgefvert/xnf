@@ -6,12 +6,12 @@ as valuable as new features.
 
 ## Getting started
 
-1. Read [KERNEL_OVERVIEW.md](KERNEL_OVERVIEW.md) and the guide for the subsystem
+1. Read [OVERVIEW.md](docs/OVERVIEW.md) and the guide for the subsystem
    you plan to change. The overview links to all of the technical guides.
 2. For a substantial change, open an issue or start a discussion first to share
    the problem and approach. Small fixes can go straight to a pull request.
 3. Set up CMake, NASM, MinGW GCC/binutils, QEMU, Python, and GDB as described in
-   [KERNEL_BUILD.md](KERNEL_BUILD.md). Use the same compiler and generator for
+   [BUILD.md](docs/BUILD.md). Use the same compiler and generator for
    the normal and test builds.
 4. Make your changes on a branch and open a pull request describing the problem,
    your solution, and the checks you ran. Include any known limitations or tests

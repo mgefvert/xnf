@@ -8,7 +8,7 @@
 
 #include "paging.h"
 
-/* Normal context only, with no preemptive scheduler and one CPU. Never call
+/* Non-preemptive normal context only, on one CPU. Never call
    from IRQ/exception handlers. IRQs may run during zeroing and scans; calls
    preserve IF. Initialize once after PMM handover. */
 void vmm_init(void);

@@ -293,6 +293,7 @@ protected_mode_entry:
 
 %include "paging.asm"
 %include "interrupts.asm"
+%include "threads.asm"
 
 section .data
 align 16, db 0

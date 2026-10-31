@@ -14,6 +14,13 @@ volatile uint32_t helpers_test_stage;
 static char keys[64][4];
 static void *pressure_slots[2048];
 
+typedef struct TestLinkedItem {
+    LinkedListNode links;
+    uint32_t payload;
+} TestLinkedItem;
+typedef char links_first_check[__builtin_offsetof(TestLinkedItem, links) == 0 ? 1 : -1];
+typedef char links_layout_check[__builtin_offsetof(LinkedListNode, next) == sizeof(void *) ? 1 : -1];
+
 static void require(bool condition, const char *reason)
 {
     if (!condition) kernel_panic("Helpers test", reason);
@@ -34,6 +41,8 @@ void helpers_self_test(void)
     List *list;
     LinkedList *linked, *other;
     LinkedListNode *first, *middle, *last;
+    TestLinkedItem items[3] = {{{0, 0}, 10}, {{0, 0}, 20}, {{0, 0}, 30}};
+    TestLinkedItem *heap_item;
     Dictionary *dictionary, *full_dictionary;
     DictionaryIterator iterator;
     StringView key;
@@ -86,20 +95,39 @@ void helpers_self_test(void)
 
     linked = linked_list_create(); other = linked_list_create();
     require(linked && other, "linked create");
-    first = linked_list_push_front(linked, &values[0]);
-    last = linked_list_push_back(linked, &values[2]);
-    middle = linked_list_insert_before(linked, last, 0);
-    require(first && middle && last && linked_list_count(linked) == 3 &&
+    i = kheap_live_allocations();
+    first = &items[0].links; middle = &items[1].links; last = &items[2].links;
+    require(linked_list_push_front(linked, first) && linked_list_push_back(linked, last) &&
+            linked_list_insert_before(linked, last, middle) && linked_list_count(linked) == 3 &&
+            linked_list_first(linked) == first && linked_list_last(linked) == last &&
             linked_list_next(first) == middle && linked_list_previous(last) == middle &&
-            linked_list_value(middle) == 0 && !linked_list_remove(other, middle, 0), "linked traversal");
-    require(linked_list_remove(linked, middle, &value) && !value &&
-            linked_list_pop_front(linked, &value) && value == &values[0] &&
-            linked_list_pop_back(linked, &value) && value == &values[2] &&
-            !linked_list_pop_back(linked, 0), "linked removal");
-    require(linked_list_push_back(linked, &values[0]) &&
-            linked_list_insert_after(linked, linked_list_first(linked), &values[1]), "linked insert after");
+            ((TestLinkedItem *)middle)->payload == 20 && kheap_live_allocations() == i &&
+            !linked_list_push_front(linked, first), "linked traversal");
+    require(linked_list_remove(linked, middle) && !middle->previous && !middle->next &&
+            linked_list_pop_front(linked) == first && linked_list_pop_back(linked) == last &&
+            !linked_list_pop_back(linked) && !linked_list_remove(linked, middle), "linked removal");
+    require(linked_list_push_back(linked, first) && linked_list_insert_after(linked, first, middle) &&
+            linked_list_push_front(linked, last), "linked insert after");
     linked_list_clear(linked);
-    require(!linked_list_first(linked) && !linked_list_last(linked), "linked clear");
+    require(!linked_list_first(linked) && !linked_list_last(linked) && !linked_list_count(linked) &&
+            !first->previous && !first->next && !middle->previous && !middle->next &&
+            !last->previous && !last->next && items[1].payload == 20 &&
+            linked_list_push_back(other, middle) && !linked_list_remove(linked, middle), "linked clear/reuse");
+    linked_list_clear(other);
+    heap_item = kmalloc(sizeof(*heap_item));
+    require(heap_item != 0, "linked caller allocation");
+    heap_item->links.previous = heap_item->links.next = 0;
+    heap_item->payload = 1234;
+    require(linked_list_push_back(other, &heap_item->links) && linked_list_push_back(other, last) &&
+            heap_item->links.next == last && last->previous == &heap_item->links,
+            "linked caller-owned node");
+    linked_list_destroy(other);
+    other = 0;
+    require(!heap_item->links.previous && !heap_item->links.next && !last->previous && !last->next &&
+            heap_item->payload == 1234 &&
+            kheap_live_allocations() == i, "linked destroy preserves object");
+    kfree(heap_item);
+    require(kheap_live_allocations() + 1u == i, "linked object caller release");
 
     dictionary = dictionary_create();
     require(dictionary && dictionary_insert(dictionary, STRING_VIEW_LITERAL("a"), 0) == DICTIONARY_OK &&
@@ -211,6 +239,10 @@ void helpers_self_test(void)
             "owned entry table growth rollback");
     pressure_slots[i] = kmalloc(32);
     require(pressure_slots[i] != 0, "reclaim isolated pressure hole");
+    available = kheap_live_allocations();
+    require(linked_list_push_front(linked, first) && linked_list_push_back(linked, middle) &&
+            linked_list_remove(linked, first) && linked_list_pop_back(linked) == middle &&
+            kheap_live_allocations() == available, "linked operations under pressure");
     require(!kstring_reserve(&string, 100000) &&
             !kstring_insert(&string, 1, kstring_view(string)) && kstrcmp(kstring_data(string), "abc") == 0 &&
             !list_reserve(list, 100000) && !list_append(list, &values[0]) && list_count(list) == 0 &&

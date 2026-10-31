@@ -10,30 +10,31 @@ initialize globals, allocate memory, or print messages on its behalf.
 
 | Guide | Subject |
 | --- | --- |
-| [KERNEL_BOOT.md](KERNEL_BOOT.md) | From BIOS entry to C: CPU requirements, addresses, descriptors, stacks |
-| [KERNEL_MEMORY.md](KERNEL_MEMORY.md) | Firmware memory maps, physical ownership, paging, virtual allocation |
-| [KERNEL_HEAP.md](KERNEL_HEAP.md) | Aligned byte allocations, calloc, coalescing, and page reclamation |
-| [KERNEL_HELPERS.md](KERNEL_HELPERS.md) | Managed strings and borrowed-pointer containers |
-| [KERNEL_OBJECTS.md](KERNEL_OBJECTS.md) | Typed objects, named registry, and reference ownership |
-| [KERNEL_IO.md](KERNEL_IO.md) | VGA cells, hardware cursor, port I/O, formatting API |
-| [KERNEL_INTERRUPTS.md](KERNEL_INTERRUPTS.md) | Exceptions, normalized stack frames, PIC, timer, idle loop |
-| [KERNEL_BUILD.md](KERNEL_BUILD.md) | Freestanding toolchain, disk-image pipeline, optional tests and validation |
+| [BOOT.md](BOOT.md) | From BIOS entry to C: CPU requirements, addresses, descriptors, stacks |
+| [MEMORY.md](MEMORY.md) | Firmware memory maps, physical ownership, paging, virtual allocation |
+| [HEAP.md](HEAP.md) | Aligned byte allocations, calloc, coalescing, and page reclamation |
+| [HELPERS.md](HELPERS.md) | Managed strings and borrowed-pointer containers |
+| [OBJECTS.md](OBJECTS.md) | Typed objects, named registry, and reference ownership |
+| [IO.md](IO.md) | VGA cells, hardware cursor, port I/O, formatting API |
+| [INTERRUPTS.md](INTERRUPTS.md) | Exceptions, normalized stack frames, PIC, timer, idle loop |
+| [THREADS.md](THREADS.md) | Experimental kernel threads and context switches |
+| [BUILD.md](BUILD.md) | Freestanding toolchain, disk-image pipeline, optional tests and validation |
 
-[AGENTS.md](AGENTS.md) holds repository editing and verification instructions.
+[AGENTS.md](../AGENTS.md) holds repository editing and verification instructions.
 The technical guides explain current behavior and limitations for any reader.
 
 ## Initialization order
 
-1. The BIOS executes [asm/boot.asm](asm/boot.asm) at physical `0x7C00`.
+1. The BIOS executes [asm/boot.asm](../asm/boot.asm) at physical `0x7C00`.
    The sector loads the kernel from the next disk sector to `0x10000` and
    far-jumps to `1000:0000`.
-2. [asm/kernel.asm](asm/kernel.asm) uses a temporary stack in the loaded image,
+2. [asm/kernel.asm](../asm/kernel.asm) uses a temporary stack in the loaded image,
    checks the i686 CPU baseline, collects the BIOS E820 map, enables A20,
    installs a flat GDT, and enters 32-bit protected mode with IRQs disabled.
-3. [src/boot_memory.c](src/boot_memory.c) validates the entire kernel extent
+3. [src/boot_memory.c](../src/boot_memory.c) validates the entire kernel extent
    before assembly uses the final stack or clears `.bss`.
 4. Assembly installs the exception/timer infrastructure and calls
-   [kernel_main](src/kernel.c).
+   [kernel_main](../src/kernel.c).
 5. C initializes the console and normalized memblock map, prepares and enables
    paging, initializes PMM, and permanently retires bootstrap allocation.
    A test build additionally runs the PMM ownership self-test.
@@ -60,6 +61,7 @@ when the infrastructure and allocators are ready.
 | `src/object.c` | Typed object lifetime and named-object registry |
 | `src/conio.c` | Text output, formatting, and cursor/color state |
 | `asm/interrupts.asm`, `src/interrupts.c` | Hardware entry/exit and exception diagnostics |
+| `asm/threads.asm`, `src/scheduler.c` | Experimental kernel thread entry and scheduling |
 | `src/kernel.c` | Initialization order, timer bookkeeping, idle policy |
 | `src/panic.c` | Fatal errors after the normal console becomes available |
 
@@ -69,7 +71,9 @@ ownership of either the virtual slot or the physical frame.
 
 ## Current scope
 
-The kernel runs in ring 0 on one CPU, without preemptive scheduling. Virtual
+The normal boot runs in ring 0 on one CPU without starting the experimental
+preemptive scheduler. Its disposable tests can start two kernel threads; shared
+services still require non-preemptive access. Virtual
 addresses below `0x10000000` belong to the kernel; higher addresses are
 reserved for future user processes and remain unmapped. This boundary says
 nothing about where the kernel's physical RAM must come from.

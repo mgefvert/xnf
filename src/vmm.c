@@ -97,8 +97,8 @@ void *vmm_alloc_pages(uint32_t page_count)
     if (run != page_count) {
         return 0;
     }
-    /* Only normal context may allocate: IRQ handlers never enter VMM and
-       there is no preemptive scheduler or second CPU. The reserved run is
+    /* Only non-preemptive normal context may allocate: IRQ handlers never
+       enter VMM and there is no second CPU. The reserved run is
        private until publication; zeroing does not need to mask interrupts. */
     for (page = 0; page < page_count; ++page) {
         mark(occupied, start + page, true);

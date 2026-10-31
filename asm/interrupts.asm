@@ -12,6 +12,7 @@ KERNEL_CODE_SELECTOR equ 0x08
 IDT_ENTRY_COUNT      equ 256
 EXCEPTION_COUNT      equ 32
 IRQ0_VECTOR          equ 0x20
+YIELD_VECTOR         equ 0x30
 PIC_MASTER_COMMAND   equ 0x20
 PIC_MASTER_DATA      equ 0x21
 PIC_SLAVE_COMMAND    equ 0xA0
@@ -24,6 +25,7 @@ PIT_CHANNEL0_DIVISOR equ 11932
 
 extern _exception_handler
 extern _timer_handler
+extern _scheduler_select
 global _interrupts_init
 global _interrupts_enable_and_halt
 
@@ -91,15 +93,35 @@ irq0_stub:
     ; EBP remembers the untouched frame so alignment padding is reversible.
     and esp, 0xFFFFFFF0
     call _timer_handler
-    mov esp, ebp
+    ; Select while IF remains clear. The returned frame may be on another
+    ; thread's stack; keep it in EBP until the PIC has been acknowledged.
+    sub esp, 12
+    push ebp
+    call _scheduler_select
+    mov ebp, eax
 
     ; IRQ0 is on the master PIC, so acknowledge it through the master's command
     ; port (0x20) with the non-specific EOI command (0x20).
     mov al, 0x20
     out PIC_MASTER_COMMAND, al
 
+    mov esp, ebp
     popad
     iretd                      ; Restores EIP, CS, and the interrupted EFLAGS/IF.
+
+; Software yield presents exactly the same PUSHAD/IRETD frame as IRQ0, but
+; is not a PIC interrupt and must not send an end-of-interrupt command.
+yield_stub:
+    pushad
+    cld
+    mov ebp, esp
+    and esp, 0xFFFFFFF0
+    sub esp, 12
+    push ebp
+    call _scheduler_select
+    mov esp, eax
+    popad
+    iretd
 
 ; At entry the normalized stack is vector, error code, EIP, CS, EFLAGS.
 ; PUSHAD makes the structure passed to C begin with EDI, ESI, EBP, saved ESP,
@@ -153,6 +175,16 @@ _interrupts_init:
     ; Keep hardware IRQ0 in this same IDT, immediately after CPU exceptions.
     mov eax, irq0_stub
     mov edi, idt + IRQ0_VECTOR * 8
+    mov [edi], ax
+    mov word [edi + 2], KERNEL_CODE_SELECTOR
+    mov byte [edi + 4], 0
+    mov byte [edi + 5], 0x8E
+    shr eax, 16
+    mov [edi + 6], ax
+
+    ; Ring-0 software interrupt used for explicit cooperative switching.
+    mov eax, yield_stub
+    mov edi, idt + YIELD_VECTOR * 8
     mov [edi], ax
     mov word [edi + 2], KERNEL_CODE_SELECTOR
     mov byte [edi + 4], 0

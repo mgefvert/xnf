@@ -1,6 +1,6 @@
 /*
  * Typed, heap-owned kernel objects and a named registry of strong references.
- * See KERNEL_OBJECTS.md for initialization, lifetime, and execution contracts.
+ * See docs/OBJECTS.md for initialization, lifetime, and execution contracts.
  */
 #ifndef XNF_OBJECT_H
 #define XNF_OBJECT_H

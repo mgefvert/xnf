@@ -1,19 +1,21 @@
-# Strings and pointer containers
+# Strings and containers
 
-[inc/helpers.h](inc/helpers.h) declares the freestanding helpers implemented in
-[src/helpers.c](src/helpers.c). They need no hosted C library. Allocating
+[inc/helpers.h](../inc/helpers.h) declares the freestanding helpers implemented in
+[src/helpers.c](../src/helpers.c). They need no hosted C library. Allocating
 operations use `kmalloc` and `kfree`; the heap must already be initialized.
 They inherit its one-CPU, non-preemptive normal-context restriction: do not
 call them from IRQ or exception handlers. Pure string and memory operations do
 not allocate, but callers must still synchronize access to shared data.
 
-The three containers own their objects and metadata, but **borrow all value
-pointers**. Values may be null and are never freed or dereferenced by a
-container. An output pointer on a lookup/removal may be null when the value is
+Array lists and dictionaries own their metadata but **borrow all value
+pointers**. Values may be null and are never freed or dereferenced by those
+containers. An output pointer on a lookup/removal may be null when the value is
 not needed. A Boolean result distinguishes an absent entry from a stored null;
-on failure output arguments are unchanged. Except where explicitly allowed
-below, object, node, buffer, and string pointers must be valid. Destroying a
-null container or string is a no-op; other operations require a live object.
+on failure output arguments are unchanged. The linked list instead links
+caller-owned objects directly, as described below. Except where explicitly
+allowed below, object, node, buffer, and string pointers must be valid.
+Destroying a null container or string is a no-op; other operations require a
+live object.
 
 Allocation failures and integer overflow leave the existing object and its
 contents unchanged. `kmalloc` returns null before heap initialization or under
@@ -85,18 +87,51 @@ constant time, and middle insertion/removal is linear.
 
 ## Doubly linked list
 
-`linked_list_create`, `linked_list_destroy`, and `linked_list_clear` manage
-the list and its individually allocated nodes. `linked_list_push_front`,
-`linked_list_push_back`, `linked_list_insert_before`, and
-`linked_list_insert_after` return the new node or null on failure. End accessors
-`linked_list_first`/`linked_list_last` return null for an empty list;
-`linked_list_next`/`linked_list_previous` return null at the corresponding end.
-`linked_list_value` reads a node's borrowed value, and `linked_list_count`
-reports the number of nodes. `linked_list_remove` unlinks a known node;
-`linked_list_pop_front`/`linked_list_pop_back` remove an endpoint. They return
-false for an empty endpoint or a live node belonging to another list. Nodes
-must be live: removal, clear, or destroy invalidates their handles. Inserting
-or removing a known node is constant time; there is no indexed access API.
+Each caller-owned object starts with a `LinkedListNode` member. Its first
+pointer is `previous` and its second is `next`; both point to the embedded
+node at the beginning of another object, or are null at an end. Declare the
+member using the actual `LinkedListNode` type so C accesses have the correct
+type, and initialize both links to null before insertion. A node pointer can
+be converted back to its enclosing object pointer because the node is the
+first member. The object may have other fields after the links.
+
+`linked_list_create` allocates only the list header. The caller owns every
+object and must keep it alive and unmoved while linked. Insertion, traversal,
+removal, and clearing allocate and free nothing. `linked_list_destroy` clears
+the list and frees the header, but never frees objects. Removal, pop, clear,
+and destroy reset the removed nodes' links to null, leaving their objects
+valid and ready for reuse. `linked_list_count` reports the number of nodes.
+
+`linked_list_push_front`, `linked_list_push_back`, `linked_list_insert_before`,
+and `linked_list_insert_after` accept an embedded node and return false for a
+null node, a null anchor, a visibly linked node, or count overflow. The caller
+must ensure each inserted node is detached and belongs to no other list, and
+each insertion anchor or removed node belongs to the specified list. These
+preconditions cannot be fully checked from two links: in particular, a node
+alone in another list also has two null links. Violating them can corrupt lists.
+Inserting or removing a known node is constant time; clear and destroy visit
+each node. End and traversal accessors return node pointers or null at the end.
+`linked_list_remove` returns whether it removed a node;
+`linked_list_pop_front` and `linked_list_pop_back` return the removed node or
+null for an empty list. There is no separate value pointer or indexed access.
+Callers must synchronize concurrent access, and must not modify links directly
+while an object is in a list.
+
+```c
+typedef struct WorkItem {
+    LinkedListNode links; /* Must be the first member. */
+    uint32_t id;
+} WorkItem;
+
+WorkItem item = {{0, 0}, 42};
+LinkedList *work = linked_list_create();
+if (work && linked_list_push_back(work, &item.links)) {
+    WorkItem *first = (WorkItem *)linked_list_first(work);
+    /* first is &item; the list does not own it. */
+    (void)first;
+}
+linked_list_destroy(work); /* Detaches item; its lifetime remains with the caller. */
+```
 
 ## Dictionary
 
@@ -157,6 +192,7 @@ The optional `tests/kernel/helpers_test.c` is linked only in a test build.
 `python tests/helpers_qemu.py --build cmake-build-tests` runs its entry in
 disposable 128/512 MiB guests and checks ownership restoration, mappings,
 timer progress, and fault/reset logs. The guest covers string bounds and
-aliasing, list growth, linked traversal, dictionary collisions, owned-key
+aliasing, list growth, caller-owned linked objects and heap-free linking,
+dictionary collisions, owned-key
 lifetimes and rehashing, and rollback under real heap exhaustion. See
-[KERNEL_BUILD.md](KERNEL_BUILD.md) for configuration and tool discovery.
+[BUILD.md](BUILD.md) for configuration and tool discovery.
