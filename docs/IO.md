@@ -81,10 +81,13 @@ backward. Signed conversion computes magnitude with unsigned subtraction so
 
 ## Execution context and failures
 
-The console has no synchronization. Timer IRQ code increments a counter and
-does not print, keeping normal console state out of interrupt interleavings.
-Fatal exception handlers still use the console for a final diagnostic and
-halt; they do not implement concurrent or recoverable output.
+Each public console call excludes thread switches for its complete operation;
+nested formatting calls use the same guard. Separate calls can interleave,
+including a color change followed by output. IRQ handlers must not use the
+console; preemption guards do not exclude interrupt-side interleaving.
+Fatal exceptions and panics can interrupt console work; their terminal output
+uses the nestable guard rather than waiting on a lock held by the interrupted
+thread. A fatal report may follow partially written output and never resumes it.
 
 `kernel_panic(subsystem, reason)` disables IRQs, prints through the initialized
 console, and halts permanently. Pre-.bss boot failure must instead use the

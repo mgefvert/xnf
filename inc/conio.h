@@ -7,7 +7,8 @@
 #define XNF_CONIO_H
 
 void clear_screen(void);
-/* Normal-context output; no synchronization against concurrent console users. */
+/* Each normal-context call excludes thread switches while it updates output;
+   IRQ handlers must not use the console. Fatal exception output is terminal. */
 void kputc(unsigned int character);
 void kputs(const char *string);
 void kprint_hex(unsigned int value);

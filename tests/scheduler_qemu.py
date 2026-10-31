@@ -44,17 +44,20 @@ def run_case(environment, mode, ram):
         (build / f'{guest.name}-gdb.log').write_text(result.stdout + result.stderr)
         assert result.returncode == 0 and not re.search(r'^.*Error', result.stderr, re.M), result
         deadline = time.monotonic() + 20
+        saw_idle = False
         while True:
             time.sleep(0.2)
             guest.qmp('stop')
             stage = guest.value('_scheduler_test_stage')
             assert guest.value('_scheduler_test_error') == 0, 'guest scheduler test failed'
-            if stage:
+            if mode == 'syncsleep' and stage == 4 and guest.value('_current') == 3:
+                saw_idle = True
+            if stage and (mode != 'syncsleep' or stage == 5):
                 break
             assert time.monotonic() < deadline, 'scheduler did not make progress'
             guest.qmp('cont')
-        assert stage == {'cooperative': 1, 'preemptive': 2, 'failure': 3}[mode]
-        if mode != 'failure':
+        assert stage == {'cooperative': 1, 'preemptive': 2, 'failure': 3, 'syncsleep': 5}[mode]
+        if mode in ('cooperative', 'preemptive'):
             stack_data = guest.read(symbols['_scheduler_test_stacks'], 8, 'stacks')
             first_stack, second_stack = struct.unpack('<II', stack_data)
             assert first_stack and second_stack and abs(first_stack - second_stack) >= 4096
@@ -68,6 +71,12 @@ def run_case(environment, mode, ram):
             assert all(after > before for before, after in zip(counts_before, counts_after)), (counts_before, counts_after)
             assert guest.value('_timer_ticks') > ticks
             assert guest.value('_scheduler_test_error') == 0
+        if mode == 'syncsleep':
+            assert saw_idle, 'all sleeping threads did not reach idle'
+            assert guest.value('_timer_ticks') < 1000, 'tick counter did not wrap'
+            raw = guest.read(0xb8000, 4000, 'output')[::2].decode('ascii')
+            lines = [raw[i:i + 80].rstrip() for i in range(0, 2000, 80)]
+            assert lines.count('AAAAAAAAAA') == 8 and lines.count('BBBBBBBBBB') == 8, lines
         registers = guest.monitor('info registers')
         assert 'CR0=80010011' in registers and 'CR4=00000000' in registers
         assert int(re.search(r'CR3=([0-9a-fA-F]+)', registers)[1], 16) == guest.value('_paging_directory_physical')
@@ -88,4 +97,5 @@ if __name__ == '__main__':
     for memory in (128, 512):
         run_case(env, 'cooperative', memory)
         run_case(env, 'preemptive', memory)
+        run_case(env, 'syncsleep', memory)
     run_case(env, 'failure', 128)

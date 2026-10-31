@@ -5,6 +5,7 @@
 
 #include "types.h"
 #include "conio.h"
+#include "preempt.h"
 
 #include <stdarg.h>
 
@@ -67,18 +68,22 @@ static void conio_scroll(void)
 void clear_screen(void)
 {
     uint32_t index;
-    uint16_t cell = (uint16_t)(' ' | ((uint16_t)conio_color << 8));
+    uint16_t cell;
+    preempt_disable();
+    cell = (uint16_t)(' ' | ((uint16_t)conio_color << 8));
 
     for (index = 0; index < CONIO_SCREEN_CELLS; ++index) {
         CONIO_VIDEO_MEMORY[index] = cell;
     }
     conio_cursor = 0;
     conio_sync_hw_cursor();
+    preempt_enable();
 }
 
 void kputc(unsigned int character)
 {
     uint32_t cursor;
+    preempt_disable();
 
     /* Newline advances to the next row's first cell; carriage return moves
        within the current row. Backspace erases only when a previous cell exists. */
@@ -105,13 +110,16 @@ void kputc(unsigned int character)
     }
 
     conio_sync_hw_cursor();
+    preempt_enable();
 }
 
 void kputs(const char *string)
 {
+    preempt_disable();
     while (*string != '\0') {
         kputc((uint8_t)*string++);
     }
+    preempt_enable();
 }
 
 static void kprint_hex_digit(uint32_t digit)
@@ -130,25 +138,30 @@ static void kprint_hex_dword(uint32_t value)
 
 void kprint_hex(uint32_t value)
 {
+    preempt_disable();
     kputc('0');
     kputc('x');
     kprint_hex_dword(value);
+    preempt_enable();
 }
 
 void kprint_hex64(unsigned long long value)
 {
+    preempt_disable();
     /* Printing two 32-bit halves avoids needing 64-bit division helpers from
        a compiler runtime which this freestanding kernel does not link. */
     kputc('0');
     kputc('x');
     kprint_hex_dword((uint32_t)(value >> 32));
     kprint_hex_dword((uint32_t)value);
+    preempt_enable();
 }
 
 void kprint_dec(uint32_t value)
 {
     char digits[10];
     uint32_t count = 0;
+    preempt_disable();
 
     /* Repeated division discovers decimal digits right to left. A do/while
        still emits one digit for zero; reverse the buffer for normal order. */
@@ -160,11 +173,13 @@ void kprint_dec(uint32_t value)
     while (count != 0) {
         kputc((uint8_t)digits[--count]);
     }
+    preempt_enable();
 }
 
 void kprintf(const char *format, ...)
 {
     va_list arguments;
+    preempt_disable();
 
     /* The format string is the only type information for variadic arguments.
        Callers must match each conversion, especially the 64-bit X extension. */
@@ -224,20 +239,28 @@ void kprintf(const char *format, ...)
         }
     }
     va_end(arguments);
+    preempt_enable();
 }
 
 void ksetcolor(unsigned int attribute)
 {
+    preempt_disable();
     conio_color = (uint8_t)attribute;
+    preempt_enable();
 }
 
 unsigned int kgetcolor(void)
 {
-    return conio_color;
+    unsigned int color;
+    preempt_disable();
+    color = conio_color;
+    preempt_enable();
+    return color;
 }
 
 void ksetcursor(unsigned int column, unsigned int row)
 {
+    preempt_disable();
     if (column >= CONIO_SCREEN_WIDTH) {
         column = CONIO_SCREEN_WIDTH - 1;
     }
@@ -248,10 +271,13 @@ void ksetcursor(unsigned int column, unsigned int row)
        before computing the index so later printing stays inside VGA memory. */
     conio_cursor = (uint16_t)(column + row * CONIO_SCREEN_WIDTH);
     conio_sync_hw_cursor();
+    preempt_enable();
 }
 
 void kgetcursor(unsigned int *column, unsigned int *row)
 {
+    preempt_disable();
     *column = conio_cursor % CONIO_SCREEN_WIDTH;
     *row = conio_cursor / CONIO_SCREEN_WIDTH;
+    preempt_enable();
 }

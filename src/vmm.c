@@ -8,6 +8,7 @@
 #include "pmm.h"
 #include "conio.h"
 #include "panic.h"
+#include "preempt.h"
 
 #define PAGE_COUNT (KERNEL_VIRTUAL_END / PAGE_SIZE)
 #define BITMAP_WORDS (PAGE_COUNT / 32u)
@@ -38,7 +39,7 @@ static void mark(uint32_t *map, uint32_t page, bool value)
     }
 }
 
-void vmm_init(void)
+static void vmm_init_impl(void)
 {
     uint32_t page;
     PagingMapping mapping;
@@ -75,7 +76,7 @@ static void release_page(uint32_t page)
     }
 }
 
-void *vmm_alloc_pages(uint32_t page_count)
+static void *vmm_alloc_pages_impl(uint32_t page_count)
 {
     uint32_t page;
     uint32_t run = 0;
@@ -149,7 +150,7 @@ void *vmm_alloc_pages(uint32_t page_count)
     return (void *)(start * PAGE_SIZE);
 }
 
-bool vmm_free_pages(void *base)
+static bool vmm_free_pages_impl(void *base)
 {
     uint32_t address = (uint32_t)base;
     uint32_t start = address / PAGE_SIZE;
@@ -195,4 +196,31 @@ uint32_t vmm_free_page_count(void)
 bool vmm_is_initialized(void)
 {
     return initialized;
+}
+
+/* Keep the complete ownership transaction non-preemptive, not merely each
+   individual page-table update. Timer IRQs can still run between those edits. */
+void vmm_init(void)
+{
+    preempt_disable();
+    vmm_init_impl();
+    preempt_enable();
+}
+
+void *vmm_alloc_pages(uint32_t count)
+{
+    void *result;
+    preempt_disable();
+    result = vmm_alloc_pages_impl(count);
+    preempt_enable();
+    return result;
+}
+
+bool vmm_free_pages(void *base)
+{
+    bool result;
+    preempt_disable();
+    result = vmm_free_pages_impl(base);
+    preempt_enable();
+    return result;
 }

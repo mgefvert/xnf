@@ -7,6 +7,7 @@
 #include "vmm.h"
 #include "panic.h"
 #include "conio.h"
+#include "preempt.h"
 
 #define DEFAULT_EXTENT_PAGES 4u
 #define UINT32_MAX_VALUE (~(uint32_t)0)
@@ -133,7 +134,7 @@ static void *claim_block(HeapExtent *extent, HeapBlock *block, uint32_t capacity
     return block + 1;
 }
 
-void kheap_init(void)
+static void kheap_init_impl(void)
 {
     if (heap_initialized || !vmm_is_initialized()) {
         kernel_panic("Heap", "initialize once after VMM");
@@ -149,7 +150,7 @@ bool kheap_is_initialized(void)
     return heap_initialized;
 }
 
-void *kmalloc(uint32_t size)
+static void *kmalloc_impl(uint32_t size)
 {
     HeapExtent *extent;
     uint32_t capacity;
@@ -174,7 +175,7 @@ void *kmalloc(uint32_t size)
     return extent == 0 ? 0 : claim_block(extent, first_block(extent), capacity);
 }
 
-void *kcalloc(uint32_t count, uint32_t size)
+static void *kcalloc_impl(uint32_t count, uint32_t size)
 {
     uint32_t bytes;
     uint32_t i;
@@ -212,7 +213,7 @@ static void merge_right(HeapExtent *extent, HeapBlock *block)
     }
 }
 
-void kfree(void *pointer)
+static void kfree_impl(void *pointer)
 {
     HeapExtent *extent;
     uint32_t address = (uint32_t)pointer;
@@ -285,4 +286,38 @@ uint32_t kheap_allocated_pages(void)
 uint32_t kheap_live_allocations(void)
 {
     return heap_allocations;
+}
+
+/* Nested guards allow heap growth/reclamation to enter VMM without enabling
+   scheduling in the middle of heap metadata updates. */
+void kheap_init(void)
+{
+    preempt_disable();
+    kheap_init_impl();
+    preempt_enable();
+}
+
+void *kmalloc(uint32_t size)
+{
+    void *result;
+    preempt_disable();
+    result = kmalloc_impl(size);
+    preempt_enable();
+    return result;
+}
+
+void *kcalloc(uint32_t count, uint32_t size)
+{
+    void *result;
+    preempt_disable();
+    result = kcalloc_impl(count, size);
+    preempt_enable();
+    return result;
+}
+
+void kfree(void *pointer)
+{
+    preempt_disable();
+    kfree_impl(pointer);
+    preempt_enable();
 }

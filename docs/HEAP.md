@@ -102,11 +102,11 @@ payload; only complete extent reclamation revokes the pages.
 
 ## Execution context
 
-Heap operations inherit VMM's execution model: one CPU, non-preemptive normal context,
-and no calls from IRQ/exception handlers. They preserve the caller's IF and
-do not mask interrupts around scans or clearing. Individual PMM/page-table
-operations retain their short interrupt guards. Introduce synchronization
-before allowing scheduled threads, SMP, or another execution context to use the heap concurrently.
+Heap operations run on one CPU in normal context, never in IRQ/exception
+handlers. Each allocation or free excludes preemption for the entire heap
+transaction, including nested VMM work. It preserves the caller's IF and does
+not mask interrupts around scans or clearing. PMM/page-table operations retain
+their short interrupt guards. This does not provide SMP synchronization.
 
 ```c
 uint32_t *values = kcalloc(100, sizeof(*values));

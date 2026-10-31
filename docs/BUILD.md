@@ -40,7 +40,10 @@ the real objects. Both use the same flags. Among those flags:
 The real link passes only the assembly object and selected kernel C objects.
 Adding a file under `src/` or `inc/` regenerates CMake's source/header lists.
 Optional C tests live under `tests/kernel/` and are included only when
-`XNF_BUILD_TESTS=ON`. Test functions stay outside normal allocator headers.
+`XNF_BUILD_TESTS=ON`. Those test sources use `-Os` to leave room within the
+127-sector BIOS loader limit; kernel sources retain the normal flags. The CLion
+code model uses the same per-source flags. Test functions stay outside normal
+allocator headers.
 
 ## Image pipeline
 
@@ -76,15 +79,17 @@ cmake --build cmake-build-debug --target run
 ```
 
 Equivalently, launch QEMU with `-drive format=raw,file=PATH_TO_BUILD/xnf.img`.
-The image should report memory initialization and paging success, reach
-`Kernel started.`, and continue printing timer dots. XNF assumes the BIOS VGA
+The normal image should report memory initialization and paging success, reach
+`Kernel started.`, and continue printing `A` and `B` approximately once per
+second each. XNF assumes the BIOS VGA
 text mode; see [I/O](IO.md) and
 [interrupts](INTERRUPTS.md).
 
 ## Validation
 
-Normal and test builds share kernel behavior, except the test build includes
-ownership self-tests and host-selectable test/fault entry points. Test scripts
+The test build includes ownership self-tests and host-selectable test/fault
+entry points, and keeps the scheduler inactive on ordinary boot so fixtures
+can use the full allocator state. Test scripts
 discover addresses from linked symbols and CR3 rather than fixed physical
 locations. The following commands and coverage describe the supported checks.
 
@@ -96,6 +101,8 @@ cmake -S . -B cmake-build-tests -DXNF_BUILD_TESTS=ON
 cmake --build cmake-build-tests
 python tests/boot_qemu.py --build cmake-build-debug
 python tests/boot_qemu.py --build cmake-build-tests
+python tests/ab_qemu.py --build cmake-build-debug
+python tests/ab_qemu.py --build cmake-build-tests
 python tests/pmm_qemu.py --build cmake-build-tests
 python tests/vmm_qemu.py --build cmake-build-tests
 python tests/kheap_qemu.py --build cmake-build-tests
@@ -117,7 +124,8 @@ Object-manager tests use the same heap harness, plus isolated pre-heap and
 invalid-release guests. See [OBJECTS.md](OBJECTS.md).
 
 Scheduler tests use disposable guests for explicit and timer-driven switches;
-see [THREADS.md](THREADS.md).
+the A/B checks also exercise normal startup and the idle thread. See
+[THREADS.md](THREADS.md).
 
 ### Boot checks
 

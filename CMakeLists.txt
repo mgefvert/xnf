@@ -65,6 +65,10 @@ if(XNF_BUILD_TESTS)
     file(GLOB KERNEL_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/kernel/*.c")
     list(APPEND KERNEL_C_SOURCES ${KERNEL_TEST_SOURCES})
+    # Test fixtures are numerous; optimize just these sources for size so the
+    # test image stays within the BIOS loader's 127-sector limit. The real
+    # kernel keeps the same flags as the normal build.
+    set_source_files_properties(${KERNEL_TEST_SOURCES} PROPERTIES COMPILE_OPTIONS "-Os")
 endif()
 file(GLOB KERNEL_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/inc/*.h"
@@ -94,11 +98,16 @@ set(KERNEL_C_OBJECTS)
 foreach(KERNEL_C_SOURCE IN LISTS KERNEL_C_SOURCES)
     get_filename_component(KERNEL_C_NAME "${KERNEL_C_SOURCE}" NAME_WE)
     set(KERNEL_C_OBJECT "${CMAKE_BINARY_DIR}/${KERNEL_C_NAME}_c.obj")
+    set(KERNEL_SOURCE_FLAGS)
+    if(KERNEL_C_SOURCE IN_LIST KERNEL_TEST_SOURCES)
+        list(APPEND KERNEL_SOURCE_FLAGS -Os)
+    endif()
 
     add_custom_command(
         OUTPUT "${KERNEL_C_OBJECT}"
         COMMAND "${KERNEL_C_COMPILER}"
             ${KERNEL_C_FLAGS}
+            ${KERNEL_SOURCE_FLAGS}
             "-I${CMAKE_CURRENT_SOURCE_DIR}/inc"
             -c "${KERNEL_C_SOURCE}"
             -o "${KERNEL_C_OBJECT}"

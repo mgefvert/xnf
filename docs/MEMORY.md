@@ -78,7 +78,7 @@ allocation never returns address zero. No memory is cleared by
 
 `kernel_main()` dumps the map, prepares and enables paging, initializes the
 PMM (which permanently retires `memblock_alloc()`), then initializes VMM and heap
-before entering the timer-driven idle loop. The PMM self-test runs only in
+before starting the normal thread demonstration. The PMM self-test runs only in
 test builds. Ordinary boot makes no bootstrap allocations now that all paging
 structures are static; the memblock allocator remains available for future
 pre-paging needs and is still permanently retired by PMM handover.
@@ -187,10 +187,9 @@ Metadata/mapping disagreement is an invariant failure and panics.
 Operations preserve IF. Scans and zeroing leave IRQs in the caller's state;
 only individual PMM operations and paging edits mask them. Transactions rely
 on one CPU, non-preemptive normal context, and no IRQ/exception handler entering
-the VMM. Reserved runs are private until fully initialized. Timer delivery
-can continue during large allocations when the caller has enabled IRQs.
-The experimental scheduler does not make VMM safe for competing threads;
-callers must exclude preemption for the complete transaction. There are no SMP
+the VMM. Each VMM transaction internally excludes preemption; reserved runs
+are private until fully initialized. Timer delivery can continue during large
+allocations when the caller has enabled IRQs. There are no SMP
 locks or TLB shootdowns. The caller must stop using memory before freeing it
 and must not separately free its backing frames through PMM. As with ordinary pointer allocators, a stale pointer cannot be detected
 after its address has been reused for a new allocation.
@@ -238,7 +237,8 @@ if (buffer != 0) {
 }
 ```
 
-Call only after `vmm_init()` in normal non-preemptive execution context.
+Call only after `vmm_init()` in normal execution context; VMM internally
+excludes preemption for its transactions.
 A frame number from `pmm_alloc_page()` must be mapped before it is used as
 memory; use the heap for ordinary objects and VMM for page-sized interfaces.
 Do not separately free a

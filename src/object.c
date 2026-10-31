@@ -5,6 +5,7 @@
 #include "object.h"
 #include "kheap.h"
 #include "panic.h"
+#include "preempt.h"
 
 #define OBJECT_MAX_U32 (~(uint32_t)0)
 
@@ -31,7 +32,7 @@ void object_test_force_references(Object *object, uint32_t references)
 }
 #endif
 
-ObjectResult object_manager_init(void)
+static ObjectResult object_manager_init_impl(void)
 {
     if (manager_initialized) return OBJECT_ALREADY_INITIALIZED;
     if (!kheap_is_initialized()) return OBJECT_NOT_READY;
@@ -74,7 +75,7 @@ static bool valid_type_name(const char *name)
     return false;
 }
 
-ObjectResult object_create(const ObjectType *type, Object **out_object)
+static ObjectResult object_create_impl(const ObjectType *type, Object **out_object)
 {
     Object *object;
     uint32_t size;
@@ -98,7 +99,7 @@ static ObjectResult retain_reference(Object *object)
     return OBJECT_OK;
 }
 
-ObjectResult object_retain(Object *object)
+static ObjectResult object_retain_impl(Object *object)
 {
     if (!manager_initialized) return OBJECT_NOT_READY;
     if (!object || !object->references || object->references <= object->publications) return OBJECT_INVALID;
@@ -117,28 +118,38 @@ void *object_body(Object *object, const ObjectType *expected_type)
     return object + 1;
 }
 
-/* No registry data is touched after calling a destructor. A callback can
-   release other objects; it must never retain or release the dying object. */
-static void drop_reference(Object *object)
+/* Detach the last reference under the guard, but defer callbacks until after
+   releasing it. The caller owns the now-unreachable dying object. */
+static bool drop_reference(Object *object)
 {
     if (--object->references == 0) {
-        const ObjectType *type = object->type;
         if (object->publications) kernel_panic("Object", "published object reached zero references");
-        if (type->destroy) type->destroy(object + 1);
-        kfree(object);
+        return true;
     }
+    return false;
+}
+
+static void destroy_object(Object *object)
+{
+    const ObjectType *type = object->type;
+    if (type->destroy) type->destroy(object + 1);
+    kfree(object);
 }
 
 void object_release(Object *object)
 {
+    bool dying;
     if (!object) return;
+    preempt_disable();
     /* Published references belong to the registry, never to callers. */
     if (!manager_initialized || !object->references || object->references <= object->publications)
         kernel_panic("Object", "release without caller reference");
-    drop_reference(object);
+    dying = drop_reference(object);
+    preempt_enable();
+    if (dying) destroy_object(object);
 }
 
-ObjectResult object_publish(StringView name, Object *object)
+static ObjectResult object_publish_impl(StringView name, Object *object)
 {
     DictionaryResult result;
     Dictionary *target;
@@ -167,7 +178,7 @@ ObjectResult object_publish(StringView name, Object *object)
     return OBJECT_OK;
 }
 
-ObjectResult object_lookup(StringView name, const ObjectType *expected_type, Object **out_object)
+static ObjectResult object_lookup_impl(StringView name, const ObjectType *expected_type, Object **out_object)
 {
     Object *object;
     ObjectResult result;
@@ -184,7 +195,7 @@ ObjectResult object_lookup(StringView name, const ObjectType *expected_type, Obj
     return OBJECT_OK;
 }
 
-ObjectResult object_unpublish(StringView name, Object *expected_object)
+static ObjectResult object_unpublish_impl(StringView name, Object *expected_object, bool *dying)
 {
     void *value;
     if (!manager_initialized) return OBJECT_NOT_READY;
@@ -201,6 +212,49 @@ ObjectResult object_unpublish(StringView name, Object *expected_object)
         dictionary_destroy(registry);
         registry = 0;
     }
-    drop_reference(expected_object);
+    *dying = drop_reference(expected_object);
     return OBJECT_OK;
+}
+
+/* Registry lookups and reference acquisition, and unpublication with its
+   reference drop, must each be indivisible to competing kernel threads. */
+ObjectResult object_manager_init(void)
+{
+    ObjectResult result;
+    preempt_disable(); result = object_manager_init_impl(); preempt_enable();
+    return result;
+}
+ObjectResult object_create(const ObjectType *type, Object **out_object)
+{
+    ObjectResult result;
+    preempt_disable(); result = object_create_impl(type, out_object); preempt_enable();
+    return result;
+}
+ObjectResult object_retain(Object *object)
+{
+    ObjectResult result;
+    preempt_disable(); result = object_retain_impl(object); preempt_enable();
+    return result;
+}
+ObjectResult object_publish(StringView name, Object *object)
+{
+    ObjectResult result;
+    preempt_disable(); result = object_publish_impl(name, object); preempt_enable();
+    return result;
+}
+ObjectResult object_lookup(StringView name, const ObjectType *type, Object **out_object)
+{
+    ObjectResult result;
+    preempt_disable(); result = object_lookup_impl(name, type, out_object); preempt_enable();
+    return result;
+}
+ObjectResult object_unpublish(StringView name, Object *object)
+{
+    ObjectResult result;
+    bool dying = false;
+    preempt_disable();
+    result = object_unpublish_impl(name, object, &dying);
+    preempt_enable();
+    if (dying) destroy_object(object);
+    return result;
 }

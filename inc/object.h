@@ -35,7 +35,8 @@ typedef enum ObjectResult {
     OBJECT_REFERENCE_LIMIT
 } ObjectResult;
 
-/* Initialize once after kheap_init; allocates nothing. Normal context only. */
+/* Initialize once after kheap_init; allocates nothing. Normal context only.
+   Manager operations exclude preemption; callers synchronize object bodies. */
 ObjectResult object_manager_init(void);
 
 /* On success create and lookup return one owned reference in out_object.

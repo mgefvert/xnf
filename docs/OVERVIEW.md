@@ -1,8 +1,8 @@
 # XNF kernel overview
 
 XNF is a small educational 32-bit x86 kernel. It boots through a legacy BIOS,
-enters protected mode, establishes paging and memory allocators, then idles
-while timer interrupts demonstrate that the kernel is still running. It is
+enters protected mode, establishes paging and memory allocators, then runs
+two timer-scheduled demonstration threads. It is
 freestanding: there is no host OS, C runtime startup, or standard library to
 initialize globals, allocate memory, or print messages on its behalf.
 
@@ -39,8 +39,10 @@ The technical guides explain current behavior and limitations for any reader.
    paging, initializes PMM, and permanently retires bootstrap allocation.
    A test build additionally runs the PMM ownership self-test.
 6. VMM initializes its virtual arena, then the heap and object manager initialize
-   without reserving backing pages. The normal kernel loop prints occasional
-   progress dots and uses `STI; HLT` to wait for interrupts.
+   without reserving backing pages. Normal boot enables interrupts, allocates
+   two thread stacks, starts the scheduler, and retires the bootstrap context.
+   Two threads print A and B approximately once per second; idle uses `STI; HLT`
+   while both sleep. Test builds retain the bootstrap idle loop for fixtures.
 
 The order is part of correctness: early C cannot use zero-initialized globals
 before `.bss` is cleared, PMM needs the normalized reservations, and VMM needs
@@ -62,7 +64,7 @@ when the infrastructure and allocators are ready.
 | `src/conio.c` | Text output, formatting, and cursor/color state |
 | `asm/interrupts.asm`, `src/interrupts.c` | Hardware entry/exit and exception diagnostics |
 | `asm/threads.asm`, `src/scheduler.c` | Experimental kernel thread entry and scheduling |
-| `src/kernel.c` | Initialization order, timer bookkeeping, idle policy |
+| `src/kernel.c` | Initialization order, timer bookkeeping, A/B demonstration |
 | `src/panic.c` | Fatal errors after the normal console becomes available |
 
 Public C interfaces live in `inc/`. `paging_internal.h` is deliberately an
@@ -71,9 +73,8 @@ ownership of either the virtual slot or the physical frame.
 
 ## Current scope
 
-The normal boot runs in ring 0 on one CPU without starting the experimental
-preemptive scheduler. Its disposable tests can start two kernel threads; shared
-services still require non-preemptive access. Virtual
+The kernel runs in ring 0 on one CPU with a simple preemptive scheduler; core
+shared services exclude preemption internally on that CPU. Virtual
 addresses below `0x10000000` belong to the kernel; higher addresses are
 reserved for future user processes and remain unmapped. This boundary says
 nothing about where the kernel's physical RAM must come from.

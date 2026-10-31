@@ -3,9 +3,10 @@
 [inc/helpers.h](../inc/helpers.h) declares the freestanding helpers implemented in
 [src/helpers.c](../src/helpers.c). They need no hosted C library. Allocating
 operations use `kmalloc` and `kfree`; the heap must already be initialized.
-They inherit its one-CPU, non-preemptive normal-context restriction: do not
-call them from IRQ or exception handlers. Pure string and memory operations do
-not allocate, but callers must still synchronize access to shared data.
+They use the heap's one-CPU, normal-context contract: do not call allocating
+operations from IRQ or exception handlers. The heap protects its own metadata,
+but callers must synchronize shared strings, containers, and other data for
+the complete helper operation. Pure string and memory operations do not allocate.
 
 Array lists and dictionaries own their metadata but **borrow all value
 pointers**. Values may be null and are never freed or dereferenced by those

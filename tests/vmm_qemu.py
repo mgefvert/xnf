@@ -30,6 +30,9 @@ def redirect(guest, port, function):
     commands.write_text('\n'.join([
         'set pagination off', 'set confirm off', 'set architecture i386',
         f'target remote 127.0.0.1:{port}',
+        # Do not abandon IRQ0 before its PIC acknowledgment.
+        f'hbreak *{symbols["_interrupts_enable_and_halt"]:#x}',
+        'continue', 'delete breakpoints',
         f'set $esp = {symbols["__kernel_stack_top"] - 4:#x}',
         'set {unsigned int}$esp = 0',
         f'set $eip = {symbols[function]:#x}',

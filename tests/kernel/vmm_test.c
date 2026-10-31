@@ -46,6 +46,7 @@ void vmm_self_test(void)
     uint32_t *a;
     uint32_t *b;
     uint32_t *c;
+    volatile uint32_t *alias;
     bool noncontiguous = false;
     uint32_t previous = 0;
     uint32_t ticks_before;
@@ -103,6 +104,9 @@ void vmm_self_test(void)
     /* Exercise borrowed mappings without releasing PMM ownership. Restore the
        VMM-owned second frame before freeing either page. IRQs exclude observers. */
     flags = irq_save();
+    /* Distinct virtual addresses temporarily alias one physical page; force
+       actual loads/stores rather than the compiler assuming independent slots. */
+    alias = b;
     require(paging_query((uint32_t)b, &first) &&
             paging_query((uint32_t)b + PAGE_SIZE, &second), "two mappings");
     b[0] = 0x12345678u;
@@ -126,18 +130,18 @@ void vmm_self_test(void)
             !paging_protect((uint32_t)b + PAGE_SIZE, 0), "unmap validation");
     require(paging_map((uint32_t)b + PAGE_SIZE, first.physical_address,
                        PAGING_WRITABLE), "borrowed map");
-    require(b[1024] == 0x12345678u, "stale TLB after remap");
+    require(alias[1024] == 0x12345678u, "stale TLB after remap");
     require(paging_protect((uint32_t)b + PAGE_SIZE, 0) &&
             paging_query((uint32_t)b + PAGE_SIZE, &queried) &&
-            queried.flags == 0 && b[1024] == b[0], "read-only query/read");
+            queried.flags == 0 && alias[1024] == alias[0], "read-only query/read");
     require(paging_protect((uint32_t)b + PAGE_SIZE, PAGING_WRITABLE),
             "restore write permission");
-    b[1024] = 0x98765432u;
-    require(b[0] == 0x98765432u, "borrowed alias");
+    alias[1024] = 0x98765432u;
+    require(alias[0] == 0x98765432u, "borrowed alias");
     require(paging_unmap((uint32_t)b + PAGE_SIZE) &&
             paging_map((uint32_t)b + PAGE_SIZE, second.physical_address,
                        PAGING_WRITABLE), "restore owned mapping");
-    require(b[1024] == 0xABCDEF01u && pmm_free_pages() == count, "mapping owns frames");
+    require(alias[1024] == 0xABCDEF01u && pmm_free_pages() == count, "mapping owns frames");
     irq_restore(flags);
     require(vmm_free_pages(a) && !vmm_free_pages(a) && vmm_free_pages(b), "release");
     a = vmm_alloc_pages(1025);

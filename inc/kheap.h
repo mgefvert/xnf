@@ -11,8 +11,8 @@
 
 #define KHEAP_ALIGNMENT 16u
 
-/* Initialize once after VMM. Normal, non-preemptive execution on one CPU only:
-   never allocate/free from IRQ or exception handlers. Calls preserve IF. */
+/* Initialize once after VMM. On one CPU, operations internally exclude
+   preemption; never allocate/free from IRQ or exception handlers. Preserve IF. */
 void kheap_init(void);
 /* Whether initialization has completed; this query allocates no memory. */
 bool kheap_is_initialized(void);

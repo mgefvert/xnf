@@ -16,13 +16,15 @@ Create, retain, publish, lookup, and unpublish return `OBJECT_NOT_READY` before
 manager initialization. `object_body` and `object_type` return null, and `object_release(NULL)`
 is a no-op, including before initialization.
 
-All object-manager operations, including callbacks and release, are restricted
-to one CPU and non-preemptive normal context. Do not call them from IRQ or
-exception handlers. They inherit the heap and Dictionary contracts and preserve
-the caller's interrupt-enable flag; they do not synchronize access. Competing
-scheduled threads, SMP, or interrupt-side access require a new synchronization design. In
-particular, lookup plus reference acquisition and name removal plus reference
-release must become indivisible. Destructors must run outside future locks.
+Object-manager operations run on one CPU in normal context, not in IRQ or
+exception handlers. A nestable preemption guard makes registry operations and
+reference updates indivisible to scheduled threads, including lookup with
+reference acquisition and unpublication with reference release. The guard
+preserves the caller's interrupt-enable flag. After the final reference is
+detached, the manager releases its guard before calling the destructor. A
+caller that entered with preemption already disabled retains that restriction.
+Object bodies and caller-owned containers need their own synchronization;
+SMP and interrupt-side access are not supported.
 
 ## Types and allocation
 

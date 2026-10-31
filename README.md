@@ -1,7 +1,7 @@
 # XNF
 
 XNF is a small educational 32-bit x86 kernel written in NASM and freestanding C. It boots through a legacy BIOS, enters 
-protected mode, initializes memory management, and idles while timer interrupts keep it running.
+protected mode, initializes memory management, and runs two simple kernel threads.
 
 ## Features
 
@@ -9,6 +9,7 @@ protected mode, initializes memory management, and idles while timer interrupts 
 - E820 memory discovery, physical frame allocation, paging, and virtual memory management.
 - A kernel heap with aligned allocations, zero-initialized allocations, and extent reclamation.
 - VGA text output, exception diagnostics, and timer interrupts.
+- Single-CPU preemptive scheduling and a timed A/B thread demonstration.
 - Managed strings, containers, and a typed object registry.
 - QEMU-based boot and subsystem tests.
 

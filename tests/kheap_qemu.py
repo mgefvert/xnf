@@ -101,6 +101,11 @@ def run_case(name, ram=128, entry='_kheap_test_entry', high=False, hook=None, ex
         commands = []
         if hook is not None:
             commands += [f'hbreak *{symbols[hook]:#x}', 'continue', 'delete breakpoints']
+        else:
+            # Redirect only after IRQ0 has returned and acknowledged the PIC;
+            # abandoning the IRQ entry can suppress every subsequent timer.
+            commands += [f'hbreak *{symbols["_interrupts_enable_and_halt"]:#x}',
+                         'continue', 'delete breakpoints']
         if entry in ('_kheap_test_preinit_entry', '_object_test_preinit_entry'):
             # Capture the actual state at the initialization boundary while
             # GDB has the CPU stopped, before the preinit probe begins.

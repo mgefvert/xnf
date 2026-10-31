@@ -84,15 +84,17 @@ low-byte-then-high-byte divisor writes. Divisor 11,932 rounds the approximately
 IRQ0 preserves the general registers, clears DF, aligns the C call sites, and
 increments `timer_ticks`. It then asks the scheduler to select a saved frame;
 when the experimental scheduler is inactive this is the interrupted frame.
+When a normal-context preemption guard is held, IRQ0 still advances the tick
+counter but resumes that same thread; scheduling is deferred until release.
 It acknowledges the master PIC with end-of-interrupt command `0x20` before
 restoring the selected frame and returning with `IRETD`. The software yield
 gate uses the same frame without acknowledging the PIC. Console output and
 allocation stay out of these handlers. See [threads](THREADS.md) for
 the frame, startup, and execution restrictions.
 
-The ordinary loop reads the volatile counter and prints an occasional dot.
-Unsigned subtraction tolerates counter wrap. The loop displays a dot every
-100 ticks, approximately one second; the integer divisor is not exact.
+The normal demonstration threads each sleep for 100 ticks between characters,
+approximately one second; the integer divisor is not exact. Test builds retain
+a bootstrap loop that prints occasional dots for independent test fixtures.
 
 `interrupts_enable_and_halt()` executes `STI; HLT`. STI delays recognition
 through the following instruction, so a pending timer cannot arrive between
