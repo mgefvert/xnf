@@ -1,6 +1,6 @@
 # XNF interrupts and diagnostics
 
-[asm/interrupts.asm](asm/interrupts.asm) handles processor entry/exit, IDT/PIC
+[asm/interrupts.asm](asm/interrupts.asm) handles processor entry/exit, IDT/PIC/PIT
 setup, and the timer IRQ. [src/interrupts.c](src/interrupts.c) interprets fatal
 exception frames; [src/kernel.c](src/kernel.c) owns timer bookkeeping and idle
 policy. See [boot](KERNEL_BOOT.md) for the flat ring-0 segment assumptions.
@@ -75,15 +75,20 @@ disposable guests and verify the address, error bits, halt state, and logs.
 
 ## Timer and idle loop
 
+The PIT generates the timer signal. During interrupt initialization, with CPU
+interrupts disabled, XNF programs PIT channel 0 via command port `0x43` and
+data port `0x40`. Command `0x34` selects a binary mode 2 rate generator with
+low-byte-then-high-byte divisor writes. Divisor 11,932 rounds the approximately
+1,193,182 Hz input to approximately 100 Hz. The PIC routes the pulses to IRQ0.
+
 IRQ0 preserves the general registers, clears DF, aligns the C call site, and
 calls a short handler that increments `timer_ticks`. It acknowledges the
 master PIC with end-of-interrupt command `0x20`, restores registers, and
 returns with `IRETD`. Console output and allocation stay out of the handler.
 
 The ordinary loop reads the volatile counter and prints an occasional dot.
-Unsigned subtraction tolerates counter wrap. XNF does not program the PIT,
-so the firmware's rate applies: 18 ticks is approximately one second only
-under the usual BIOS setup.
+Unsigned subtraction tolerates counter wrap. The loop displays a dot every
+100 ticks, approximately one second; the integer divisor is not exact.
 
 `interrupts_enable_and_halt()` executes `STI; HLT`. STI delays recognition
 through the following instruction, so a pending timer cannot arrive between

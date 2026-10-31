@@ -16,7 +16,8 @@
 #include "kernel_test.h"
 #endif
 
-#define TIMER_DISPLAY_INTERVAL 18u
+/* Channel 0 is programmed for approximately 100 ticks per second. */
+#define TIMER_DISPLAY_INTERVAL 100u
 
 /* IRQ0 changes this asynchronously. Volatile forces the idle loop to reload
    it; an aligned 32-bit read is atomic on the current single CPU. */
@@ -58,8 +59,8 @@ void kernel_main(void)
     for (;;) {
         uint32_t ticks = timer_ticks;
 
-        /* Unsigned subtraction handles a wrapping tick counter. This is
-           approximate elapsed time: XNF has not programmed the firmware PIT. */
+        /* Unsigned subtraction handles a wrapping tick counter. The PIT's
+           integer divisor makes the one-second interval approximate. */
         if ((uint32_t)(ticks - last_displayed_ticks) >= TIMER_DISPLAY_INTERVAL) {
             last_displayed_ticks = ticks;
             kputc('.');

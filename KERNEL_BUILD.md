@@ -19,6 +19,10 @@ CLion toolchain or the same tools from a shell:
 cmake --build cmake-build-debug
 ```
 
+CMake caches absolute source and build paths. After moving a checkout, create
+fresh build directories and configure them for the new location; reusing a
+copied cache can point commands at the old checkout.
+
 The `kernel_c_model` object target is excluded from the real image build. It
 lets CLion understand the C files and headers; custom compile commands build
 the real objects. Both use the same flags. Among those flags:
@@ -74,7 +78,7 @@ cmake --build cmake-build-debug --target run
 Equivalently, launch QEMU with `-drive format=raw,file=PATH_TO_BUILD/xnf.img`.
 The image should report memory initialization and paging success, reach
 `Kernel started.`, and continue printing timer dots. XNF assumes the BIOS VGA
-text mode and firmware PIT setup; see [I/O](KERNEL_IO.md) and
+text mode; see [I/O](KERNEL_IO.md) and
 [interrupts](KERNEL_INTERRUPTS.md).
 
 ## Validation

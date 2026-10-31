@@ -77,6 +77,6 @@ nothing about where the kernel's physical RAM must come from.
 VMM can return zeroed, virtually contiguous allocations in units of 4 KiB.
 The heap provides 16-byte-aligned `kmalloc`/`kcalloc` objects and `kfree`, returning
 empty extents to VMM. There is no user process, syscall layer, filesystem, keyboard
-driver, or disk driver beyond the BIOS loader. The timer uses the firmware's
-PIT configuration. Kernel section protection, guard pages, demand paging,
+driver, or disk driver beyond the BIOS loader. The PIT generates timer IRQs
+at approximately 100 Hz. Kernel section protection, guard pages, demand paging,
 and SMP synchronization are future work, not implied by the existing paging.

@@ -1,6 +1,6 @@
 ; -----------------------------------------------------------------------------
 ; Hardware entry/exit for CPU exceptions and the timer IRQ.
-; Builds the IDT, remaps the PIC, normalizes exception frames, and preserves registers.
+; Builds the IDT, configures the PIC and PIT, and preserves interrupt frames.
 ; -----------------------------------------------------------------------------
 
 ; First protected-mode exception path. These handlers run in ring 0 with the
@@ -16,6 +16,11 @@ PIC_MASTER_COMMAND   equ 0x20
 PIC_MASTER_DATA      equ 0x21
 PIC_SLAVE_COMMAND    equ 0xA0
 PIC_SLAVE_DATA       equ 0xA1
+PIT_CHANNEL0_DATA    equ 0x40
+PIT_COMMAND          equ 0x43
+; The PIT's approximately 1,193,182 Hz input divided by 11,932 yields
+; approximately 100 Hz. Round to the nearest representable divisor.
+PIT_CHANNEL0_DIVISOR equ 11932
 
 extern _exception_handler
 extern _timer_handler
@@ -187,6 +192,15 @@ _interrupts_init:
     call pic_io_wait
     out PIC_SLAVE_DATA, al
     call pic_io_wait
+
+    ; Channel 0, low byte then high byte, mode 2 rate generator, binary count.
+    ; Program the complete divisor while CPU interrupts are still disabled.
+    mov al, 0x34
+    out PIT_COMMAND, al
+    mov ax, PIT_CHANNEL0_DIVISOR
+    out PIT_CHANNEL0_DATA, al
+    mov al, ah
+    out PIT_CHANNEL0_DATA, al
 
     ; Mask every line except master IRQ0. IRQ2 remains masked, so no slave
     ; interrupt can arrive while the slave PIC is fully masked as well.
